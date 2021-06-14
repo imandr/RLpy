@@ -1,0 +1,174 @@
+<html>
+
+<head>
+    <script src="/static/request.js"></script>
+    <script type="text/javascript" src="/static/core.js"></script>
+    <script type="text/javascript" src="/static/charts.js"></script>
+        
+        <style type="text/css">
+                .metadata td {
+                        padding: 2px 20px;
+                }
+                table.metadata {
+                        border: gray 1px solid;
+                }
+        </style>
+</head>
+
+<body>
+    <h1 id="title"></h1>
+    <div id="meta_div">
+            <span id="time"></span> <script>document.getElementById("time").innerHTML=""+new Date()</script>
+            <pre id="metadata"></pre>
+    </div>
+    <p id="message"></p>
+    <div id="plots"></div>
+    <div id="chart_div" style="width: 900px; height: 500px;"></div>
+
+    <script>
+        var dims = "width: 900px; height: 500px";
+        
+        var charts = [];
+        
+        function transpose(lst)
+        {
+            // convert list of columns into list of rows
+            // assume all columns are of the same length
+            var rows = [];
+            var nrows = lst[0].length;
+            var i;
+            for( i = 0; i<nrows; i++ )
+                rows.push([]);
+            lst.forEach( (column, icolumn) => {
+                column.forEach( (v, irow) => {
+                    rows[irow].push(v);
+                });
+            });
+            return rows;
+        }
+
+        var receiver = {
+            data_received: function (data, c)
+            {
+                var labels = data.labels;
+                var plot_descs = data.plots;
+                var plots = [];
+                
+                document.getElementById("title").innerHTML = data.title;
+                
+                if( labels.length > 0 )
+                {
+                    plot_descs.forEach( (plot_desc, iplot) => {
+                        // loop over plots
+                        
+                        var plot = {
+                            "data":     data.rows, 
+                            "series":   [],
+                            "xAxes":    [{
+                                "type": "ValueAxis"
+                              }],
+                            "yAxes":    [{
+                                "type": "ValueAxis"
+                              }],
+                              "legend": {
+                                  "position":  "bottom"
+                              }
+                        };
+                        
+                        plot_desc.forEach( (series_desc, iseries) => {
+                                var series = {
+                                    "name":   series_desc.label,
+                                    "dataFields": {
+                                        "valueX": "t", 
+                                        "valueY": series_desc.label,
+                                    }
+                                };
+                                
+                                
+                                if( "line_width" in series_desc )
+                                        series.strokeWidth = series_desc.line_width;
+                                else
+                                    series.strokeWidth = 2.0;
+                                if( "color" in series_desc )
+                                        series.stroke = series_desc.color;
+                                if( "marker_style" in series_desc )
+                                {
+                                        series.bullets = [{
+                                            "type":    series_desc.marker_style
+                                        }]
+                                }
+                                //series.push({
+                                //        "label": series_desc.label,
+                                //        "options": series_options
+                                //});
+                                
+                                plot.series.push(series);
+                        });
+                        plots.push(plot);
+                    });
+                    
+                    //
+                    // create missing divs and plots
+                    //
+                    plots.forEach( (plot, iplot) => {
+                        var plot_div_id = "plot_"+iplot;
+                        var o = document.getElementById(plot_div_id);
+                        if ( o == null )
+                        {
+                            var main = document.getElementById("plots");
+                            var new_div = document.createElement("div");
+                            new_div.setAttribute("id", plot_div_id);
+                            new_div.setAttribute("style", "width: 700px; height: 400px");
+                            main.appendChild(new_div);
+                            var chart = am4core.createFromConfig(plot, plot_div_id, am4charts.XYChart);
+                            charts.push(chart);
+                        }
+                    });
+
+                    //
+                    // update plots with data
+                    //
+                    plots.forEach( (series_list, iplot) => {
+                        var chart = charts[iplot];
+                        chart.data = data.rows;
+                    });
+                    
+                    //
+                    // Show metadata
+                    //
+                    var dump = '<table class="metadata">';
+                    for( k in data.metadata )
+                    {
+                            var v = data.metadata[k];
+                            dump += "<tr><td>" + k + "</td>" 
+                                    + "<td>" + v + "</td>" 
+                                    + "</tr>";
+                    }
+                    dump += "</table>"
+                    document.getElementById("metadata").innerHTML = dump;
+                }
+                else
+                {
+                        document.getElementById("message").innerHTML = "No data received";
+                }
+                
+            }
+        };
+        
+        function request_data()
+        {
+            var request = HTTPRequest("/data", receiver, null, "json");            
+        }
+
+        function init_chart()
+        {
+            request_data();
+            setInterval(request_data, 5000);
+        }
+        
+        init_chart();
+        
+    </script>
+</body>
+
+</html>

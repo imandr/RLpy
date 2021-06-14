@@ -1,0 +1,170 @@
+<html>
+
+<head>
+    <script src="/static/request.js"></script>
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <script>
+        google.charts.load('current', {packages: ['corechart', 'line']});
+    </script>
+        
+        <style type="text/css">
+                .metadata td {
+                        padding: 2px 20px;
+                }
+                table.metadata {
+                        border: gray 1px solid;
+                }
+        </style>
+</head>
+
+<body>
+    <h1 id="title"></h1>
+    <div id="meta_div">
+            <span id="time"></span> <script>document.getElementById("time").innerHTML=""+new Date()</script>
+            <pre id="metadata"></pre>
+    </div>
+    <p id="message"></p>
+    <div id="plots"></div>
+    <div id="chart_div" style="width: 900px; height: 500px;"></div>
+
+    <script>
+        var dims = "width: 900px; height: 500px";
+        var common_options = {
+                interpolateNulls: true,
+                pointSize: 5
+        }
+        
+        var charts = [];
+        
+        function transpose(lst)
+        {
+            // convert list of columns into list of rows
+            // assume all columns are of the same length
+            var rows = [];
+            var nrows = lst[0].length;
+            var i;
+            for( i = 0; i<nrows; i++ )
+                rows.push([]);
+            for( column of lst )
+			{
+                for( var irow = 0; irow < column.length; irow++ )
+                    rows[irow].push(column[irow]);
+			}
+			return rows;
+        }
+
+        var receiver = {
+            data_received: function (data, c)
+            {
+                var labels = data.labels;
+                var columns = data.columns;
+                var plot_descs = data.plots;
+                var plots = [];
+                
+                document.getElementById("title").innerHTML = data.title;
+                
+                if( labels.length > 0 )
+                {
+                    plot_descs.forEach( (plot_desc, iplot) => {
+                        var series = [];
+                        plot_desc.forEach( (series_desc, iseries) => {
+                                var series_options = {};
+                                if( "line_width" in series_desc )
+                                        series_options.lineWidth = series_desc.line_width;
+                                if( "color" in series_desc )
+                                        series_options.color = series_desc.color;
+                                if( "marker_style" in series_desc )
+                                {
+                                        series_options.pointShape = series_desc.marker_style;
+                                        series_options.pointsVisible = true;
+                                }
+                                else
+                                        series_options.pointsVisible = false;
+                                series.push({
+                                        "label": series_desc.label,
+                                        "options": series_options
+                                });
+                        });
+                        plots.push(series);
+                    });
+                    
+                    //
+                    // create missing divs and plots
+                    //
+                    plots.forEach( (plot, iplot) => {
+                        var plot_div_id = "plot_"+iplot;
+                        var o = document.getElementById(plot_div_id);
+                        if ( o == null )
+                        {
+                            var main = document.getElementById("plots");
+                            var new_div = document.createElement("div");
+                            new_div.setAttribute("id", plot_div_id);
+                            new_div.setAttribute("style", "width: 900px; height: 300px");
+                            main.appendChild(new_div);
+                            var chart = new google.visualization.LineChart(new_div);
+                            charts.push(chart);
+                        }
+                    });
+
+                    //
+                    // update plots with data
+                    //
+                    plots.forEach( (series_list, iplot) => {
+                        var plot_data = new google.visualization.DataTable();
+                        var chart = charts[iplot];
+                        plot_data.addColumn("number", "t");
+                        var series_options = {};
+                        var cols = [columns["t"]];
+                        series_list.forEach( (series, iseries) => {
+                            series_options[iseries] = series.options;
+                            plot_data.addColumn("number", series.label);
+                            cols.push(columns[series.label]);
+                        });
+                        plot_data.addRows(transpose(cols, ));
+                        var options = common_options;           // better make a copy ?
+                        options.series = series_options;
+                        chart.draw(plot_data, options);
+                    });
+                    
+                    //
+                    // Show metadata
+                    //
+                    var dump = '<table class="metadata">';
+                    for( k in data.metadata )
+                    {
+                            var v = data.metadata[k];
+                            dump += "<tr><td>" + k + "</td>" 
+                                    + "<td>" + v + "</td>" 
+                                    + "</tr>";
+                    }
+                    dump += "</table>"
+                    document.getElementById("metadata").innerHTML = dump;
+                }
+                else
+                {
+                        document.getElementById("message").innerHTML = "No data received";
+                }
+                
+            }
+        };
+        
+        function request_data()
+        {
+            var request = HTTPRequest("/data", receiver, chart, "json");            
+        }
+
+        function init_chart()
+        {
+            chart = new google.visualization.LineChart(document.getElementById('chart_div'));
+            request_data();
+            setInterval(request_data, 5000);
+        }
+        
+        google.charts.setOnLoadCallback(init_chart);
+        
+        
+        
+    </script>
+</body>
+
+</html>
