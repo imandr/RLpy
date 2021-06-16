@@ -34,8 +34,8 @@ EnvParams = {
     },
     "walker":   {
         "gamma":    0.9,
-        "cutoff":   1,
-        #"beta":     0.5,
+        "cutoff":   None,
+        "beta":     0.5,
         "entropy_weight":   0.002,
         "target":   9.5,
         "max_episodes":     10000
@@ -48,6 +48,7 @@ EnvParams = {
         "gamma":    0.99,
         "epsilon":  0.0,
         "cutoff":   1,
+        "beta":     None,
         "learning_rate":    0.01,
         "entropy_weight":   0.01,
         "critic_weight":    0.5,
@@ -82,7 +83,7 @@ cutoff = params["cutoff"]
 max_steps_per_episode = params["max_steps_per_episode"]
 port = 8989
 hidden = 200
-beta = 0.5
+beta = params["beta"]
 epsilon = params["epsilon"]
 target = params.get("target")
 max_episodes = params["max_episodes"]
@@ -228,7 +229,14 @@ class Callback(object):
 num_inputs = env.observation_space.shape[0]
 num_actions = env.action_space.n
 
-brain = Brain((num_inputs,), num_actions, learning_rate=learning_rate, 
+model = None
+if hasattr(env, "create_model"):
+    model = env.create_model(hidden)
+    print("Using model created by the environment")
+    model.summary()
+    
+brain = Brain((num_inputs,), num_actions, model=model, 
+    learning_rate=learning_rate, 
     cutoff=cutoff, beta=beta, gamma=gamma,
     optimizer=optimizer, hidden=hidden,
     critic_weight = critic_weight,

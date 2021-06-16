@@ -55,7 +55,6 @@ class Brain(object):
         ):
         if isinstance(input_shape, int):
             input_shape = (input_shape,)
-        self.InputShape = input_shape
         self.NActions = num_actions
         if model is None:   
             model = self.default_model(input_shape, num_actions, hidden)
@@ -105,27 +104,26 @@ class Brain(object):
         critic1 = layers.Dense(hidden/5, name="critic1", activation="softplus")(common)
         critic = layers.Dense(1, name="critic")(critic1)
 
-        return keras.Model(inputs=inputs, outputs=[action, critic])
+        return keras.Model(inputs=[inputs], outputs=[action, critic])
         
     def policy(self, probs, training):
         probs = np.squeeze(probs)
-        weight = 1.0
-        if training and random.random() < self.OffPolicyProbability:
-            #print("============= off-policy choice ================")
-            uniform = np.asarray(probs > 0.0, np.float32)
-            uniform = uniform/np.sum(uniform)
-            action = np.random.choice(self.NActions, p=uniform)
-            weight = probs[action]/uniform[action]
-        elif training:
+        if training:
             action = np.random.choice(self.NActions, p=probs)
         else:
             # not training - make it a bit more greedy
             probs = probs*probs
             action = np.random.choice(self.NActions, p=probs/np.sum(probs))
-        return action, weight
+        return action
         
     def probs(self, state):
-        probs, _ = self.Model(state[None,...])
+        # add the batch dimension and make sure it's a list
+        if isinstance(state, (list, tuple)):
+            # multi-input model
+            state = [s[None,...] for s in state]
+        else:
+            state = [state[None,...]]
+        probs, _ = self.Model(state)
         return probs.numpy()[0]
         
     def save(self, filename):
@@ -285,7 +283,6 @@ class Brain(object):
         sum_values = 0.0
         sum_advantages = 0.0
         sum_returns = sum_rewards = 0.0
-        actions_record = []
 
         with tf.GradientTape() as tape:
             
@@ -299,11 +296,9 @@ class Brain(object):
                 observations = h["observations"]
                 actions = h["actions"]
                 valids = h["valids"]
-                weights = h["weights"]
-                total_steps += len(observations)
-                
-                actions_record.append(actions)
-
+                T = len(actions)
+                total_steps += T
+                                
                 #print("episode observations shape:", observations.shape)
                 probs, values = self.Model(observations)
                 values = values[:,0]
@@ -311,11 +306,6 @@ class Brain(object):
                     print("probs:", probs.numpy())
                 values_numpy = values.numpy()
                 sum_values += np.sum(values_numpy)
-                
-                if False:
-                    for obs, v, p, a, r in zip(observations, values_numpy, probs.numpy(), actions, rewards):
-                        print("l:", obs, v, p, a, r)
-                    print("-----") 
                 
                 valid_probs = self.valid_probs(probs.numpy(), valids)
                 
@@ -326,13 +316,12 @@ class Brain(object):
                 # critic losses
                 #print("mse(",returns[:,None], values,")")
                 diff = values - returns
-                episode_ctiric_loss = tf.reduce_sum(diff*diff*weights)
+                episode_ctiric_loss = tf.reduce_sum(diff*diff)
                 if False:
                     print("rewards:", rewards)
                     print("returns:", returns)
                     print("values: ", values_numpy)
                     print("diffs:  ", diff.numpy())
-                    print("weights:", weights)
                     print("critic loss:", episode_ctiric_loss.numpy())  #, " <==============" if episode_ctiric_loss.numpy() > 1.0 else "")
                 critic_losses.append(episode_ctiric_loss)
 
@@ -347,7 +336,7 @@ class Brain(object):
                 action_probs = tf.reduce_sum(probs*action_mask, axis=-1)
                 logprobs = tf.math.log(tf.clip_by_value(action_probs, 1e-5, 1-1e-5))
                 problosses = -logprobs * advantages
-                episode_actor_loss = tf.reduce_sum(problosses*weights)
+                episode_actor_loss = tf.reduce_sum(problosses)
                 actor_losses.append(episode_actor_loss)
                 
                 # entropy
@@ -432,7 +421,6 @@ class Agent(object):
         action_history = []
         observation_history = []
         valids_history = []
-        weight_history = []
         
         state = env.reset()
         #print("p:", " ", state)
@@ -442,9 +430,10 @@ class Agent(object):
         
         while (not done) and (max_steps is None or steps < max_steps):
             #print("calculating probs...")
+            if not isinstance(state, list):
+                state = [state]                 # always a list of np arrays
             probs = self.Brain.probs(state)
-            action, weight = self.Brain.policy(probs, training)
-            weight_history.append(weight)
+            action = self.Brain.policy(probs, training)
             observation_history.append(state)
             action_history.append(action)
             action_probs_history.append(probs)
@@ -464,13 +453,19 @@ class Agent(object):
             self.RunningReward = self.EpisodeReward
         else:
             self.RunningReward += self.Alpha*(self.EpisodeReward - self.RunningReward)
+        if observation_history:
+            obs0 = observation_history[0]
+            if isinstance(obs0, list):
+                # multi-array observation
+                observation_history = [np.array(column) for column in zip(*observation_history)]
+            else:
+                observation_history = np.array(observation_history)
         self.EpisodeHistory = dict(
             rewards = np.array(rewards_history),
-            observations = np.array(observation_history),
+            observations = observation_history,
             actions = np.array(action_history),
             probs = np.array(action_probs_history),
             episode_reward = self.EpisodeReward,
-            weights = np.array(weight_history),
             valids = None       # not used for now
         )
         

@@ -3,6 +3,8 @@ from gym import spaces
 import numpy as np
 from draw2d import Viewer, Circle, PolyLine, Line, Frame, Polygon, Text
 
+import tensorflow.keras.layers as layers
+from tensorflow import keras
 
 class WalkerEnv(object):
 
@@ -12,7 +14,7 @@ class WalkerEnv(object):
     Offset = Window * 4
     HoleDensity = 0.3
     ObservationSize = Window*Window + 6
-
+    
     def __init__(self):
         
         self.Space = np.zeros((self.Size+2*self.Offset, self.Size+2*self.Offset))
@@ -44,6 +46,27 @@ class WalkerEnv(object):
     
     MaskAverage = np.mean(SmoothMask)
     SmoothMask/=MaskAverage
+    
+    def create_model(self, hidden):
+        num_actions = self.action_space.n
+        sensor_shape = (self.Window, self.Window, 1)
+        sensor_input = layers.Input(shape=sensor_shape, name="sensor")
+        position_input = layers.Input(shape=(6,), name="position")
+    
+        conv1 = layers.Conv2D(4, 3, activation="relu")(sensor_input)
+        conv2 = layers.Conv2D(self.Window*self.Window, 3, activation="relu")(conv1)
+        flat = layers.Flatten()(conv2)
+        concat = layers.Concatenate()([flat, position_input])
+    
+        common = layers.Dense(hidden, activation="relu", name="common")(concat)
+
+        action1 = layers.Dense(max(hidden/5, num_actions)/2, activation="relu", name="action1")(common)
+        action = layers.Dense(num_actions, activation="softmax", name="action")(action1)
+    
+        critic1 = layers.Dense(hidden/5, name="critic1", activation="softplus")(common)
+        critic = layers.Dense(1, name="critic")(critic1)
+
+        return keras.Model(inputs=[sensor_input, position_input], outputs=[action, critic])
     
     def smooth_field(self, field, alpha = 0.5):
         field_1 = field.copy()
@@ -108,9 +131,9 @@ class WalkerEnv(object):
         wy = self.Offset + self.Y + self.VY - self.Window//2
         w = self.Space[wx:wx+self.Window,wy:wy+self.Window]
         #print(self.X, self.Y, wx, wy, w.shape)
-        obs[6:6+self.Window*self.Window] = w.reshape((-1,))[:]
+        #obs[6:6+self.Window*self.Window] = w.reshape((-1,))[:]
         #print("observation:", obs)
-        return obs
+        return [w[..., None], obs[:6]]
             
     def step(self, action):
         #print("setep: action:", action)
@@ -134,13 +157,13 @@ class WalkerEnv(object):
         if self.Space[x+self.Offset, y+self.Offset] < 0.0:
             done = True
             #print("--- crash")
-            reward = -1.0
+            reward = -2.0
         elif x == self.TargetX and y == self.TargetY:
             done = True
             reward = 10.0
             #print("--- hit")
         elif vx == 0 and vy == 0 and self.VX == 0 and self.VY == 0:
-            reward = -0.01
+            reward = -0.05
         else:
             reward = 0.0
         self.VX, self.VY = vx, vy
