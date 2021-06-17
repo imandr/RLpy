@@ -1,2 +1,2 @@
-from .smoothie import Smoother, Smoothie
+from .smoothie import Smoother, Smoothie, MovingAverage
 from .monitor import Monitor

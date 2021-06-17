@@ -106,14 +106,18 @@ class Brain(object):
 
         return keras.Model(inputs=[inputs], outputs=[action, critic])
         
-    def policy(self, probs, training):
+    def policy(self, probs, training, valid_actions=None):
+        
         probs = np.squeeze(probs)
-        if training:
-            action = np.random.choice(self.NActions, p=probs)
-        else:
-            # not training - make it a bit more greedy
+        if not training:
+            # make it a bit more greedy
             probs = probs*probs
-            action = np.random.choice(self.NActions, p=probs/np.sum(probs))
+            probs = probs/np.sum(probs)
+
+        if valid_actions is not None:
+            probs = self.valid_probs(probs, valid_actions)
+
+        action = np.random.choice(self.NActions, p=probs)
         return action
         
     def probs(self, state):
@@ -493,50 +497,34 @@ class MultiAgent(object):
         self.RunningReward = 0.0
         
     def reset(self, training=True):
+        self.Training = training
         self.EpisodeReward = self.Reward = 0.0
         self.Observations = []
         self.States = []
         self.Rewards = []
         self.Actions = []
-        self.ValidMoves = []
+        self.ValidActions = []
         self.Values = []
         self.ProbsHistory = []
+        self.ValidProbsHistory = []
         self.FirstMove = True
         self.Done = False
         #print("Agent[%d].reset()" % (id(self)%100,))
         
-    def choose_action(self, observation, available_actions, training):
+    def choose_action(self, observation, available_actions=None):
         self.Observations.append(observation)
-        self.ValidMoves.append(available_actions)
+        self.ValidActions.append(available_actions)
         state = observation
         if not isinstance(state, list):     # state can be a list of np.arrays
             state = [state]
-        state = [tf.expand_dims(tf.convert_to_tensor(s), 0) for s in state]
-        #print("state:", state)
         self.States.append(state)
-        action_probs, critic_value = self.Brain(state)
-        masked_probs = action_probs = action_probs.numpy()[0]
-        critic_value = critic_value.numpy()[0,0]
-        
-        #action_probs = action_probs[0]
-        #critic_value = critic_value[0,0]
-        
-        #print("action_probs, critic_value:", action_probs.numpy(), critic_value.numpy())
-        
-        self.ProbsHistory.append(action_probs)      
-        self.Values.append(critic_value)            
-
-        if available_actions is not None:
-            masked_probs = action_probs * available_actions
-            masked_probs = masked_probs/np.sum(masked_probs)
-            if not training:            # for now
-                masked_probs = masked_probs*masked_probs
-                masked_probs /= np.sum(masked_probs)
-                #print("non-training policy")
-        action = np.random.choice(self.NActions, p=masked_probs)
-            
+        self.ValidActions.append(available_actions)
+        probs = self.Brain.probs(state)
+        valid_probs = self.Brain.policy(probs, self.Training, available_actions)
+        self.ProbsHistory.append(probs)      
+        self.ValidProbsHistory.append(valid_probs)      
+        action = np.random.choice(self.NActions, p=valid_probs)
         self.Actions.append(action)
-        #print("Agent", id(self)%10, " obs:", observation, "   probs:", action_probs, "   action:", action, "  masked probs:", masked_probs, "   value:", critic_value)    #, "  available:", available_actions, "    masked probs:", masked_probs, "   value:", critic_value.numpy())
         return action
         
     def action(self, observation, available_actions, training=True):
@@ -568,13 +556,14 @@ class MultiAgent(object):
         #self.Observations.append(observation)
         
     def episode_history(self):
-        valids = np.array(self.ValidMoves) if self.ValidMoves[0] is not None else None
+        valids = np.array(self.ValidActions) if self.ValidMoves[0] is not None else None
         out = {
             "rewards":          np.array(self.Rewards),
             "actions":          np.array(self.Actions),
-            "valids":           valids,
-            "observations":     np.array(self.Observations) #,
-            #"episode_reward":   self.EpisodeReward
+            "valid_actions":    valids,
+            "observations":     np.array(self.Observations),
+            "probs":            np.array(self.ProbsHistory),
+            "valid_probs":      np.array(self.ValidProbsHistory)
         }
         #print("Agent[%d].history():" % (id(self)%100,), *((k, len(lst) if lst is not None else "none") for k, lst in out.items()))
         #print("          valids:", out["valids"])

@@ -1,5 +1,16 @@
 import numpy as np
 
+class MovingAverage(object):
+    def __init__(self, alpha=0.1):
+        self.Alpha = alpha
+        self.Value = None
+        
+    def __call__(self, x):
+        if self.Value is None:
+            self.Value = x
+        self.Value += self.Alpha*(x-self.Value)
+        return self.Value
+
 class Smoothie(object):
     def __init__(self, alpha = 0.1):
         self.Low = self.High = None

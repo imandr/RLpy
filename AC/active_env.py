@@ -1,3 +1,34 @@
+class ActiveEnvAgent(object):
+    #
+    # Abstract class defining the Active Environment Agent interface
+    #
+    
+    def __init__(self):
+        pass
+        
+    def reset(self, training):
+        # reset the agent state and get ready for the episode in training or test mode
+        pass
+        
+    def update(self, observation):
+        # the environment may notify the agent about its changes by calling this method zero or more times between agent's actions
+        pass
+
+    def reward(self, reward):
+        # this function will also be called when the agent receives reward, which may be 0 or more times between the agent's actions
+        # the reward is the reward collected since last "reward" or "action" call
+        pass
+        
+    def action(self, observation, available_actions):
+        # the environment asks the agent for the next action for the observation
+        raise NotImplementedError()
+        
+    def done(self, observation=None):
+        # the environment signals the end of the episode. Depending on the environment, it may also provide the last observation,
+        # corresponding to the end state for the agent
+        pass
+        
+
 class ActiveEnvironment(object):
 
     def __init__(self, name=None, max_turns=None, action_space=None, observation_space=None):
