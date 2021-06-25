@@ -44,11 +44,9 @@ class Brain(object):
     
     def __init__(self, input_shape=None, num_actions=None, model=None, optimizer=None, hidden=128, gamma=0.99, 
             learning_rate = 0.001,       # learning rate for the common part and the Actor
-            actor_lag = 0.2,       # critic rate slow down (1.0 means no slow down)
             entropy_weight = 0.01,
             invalid_action_weight = 0.5,
             critic_weight = 1.0,
-            epsilon = 0.0,
             cutoff = 1, beta = None     # if cutoff is not None, beta is ignored
                                         # if cutoff is None and beta is None, entropy is used
                                         # otherwise beta is used
@@ -63,9 +61,7 @@ class Brain(object):
         self.Optimizer = optimizer
         self.Cutoff = cutoff
         self.Beta = beta
-        self.OffPolicyProbability = epsilon
         
-        self.ActorLag = actor_lag
         
         self.Gamma = gamma
         self.MeanRet = 0.0
@@ -105,6 +101,9 @@ class Brain(object):
         critic = layers.Dense(1, name="critic")(critic1)
 
         return keras.Model(inputs=[inputs], outputs=[action, critic])
+        
+    def reset_episode(self):    # overridable
+        pass
         
     def policy(self, probs, training, valid_actions=None):
         
@@ -268,7 +267,102 @@ class Brain(object):
             probs = valid_masks * probs
             probs = probs/np.sum(probs, axis=-1, keepdims=True)
         return probs
-            
+        
+    def losses_from_episode(self, h):
+        critic_losses = []
+        actor_losses = []
+        invalid_action_losses = []
+        entropy_losses = []
+
+        log_n_actions = math.log(self.NActions)
+        
+        rewards = h["rewards"]
+        observations = h["observations"]
+        actions = h["actions"]
+        valids = h["valids"]
+
+        # transpose observations history
+        xcolumns = [np.array(column) for column in zip(*observations)]
+
+        #print("episode observations shape:", observations.shape)
+        probs, values = self.Model(xcolumns)
+        values = values[:,0]
+        values_numpy = values.numpy()
+        sum_values = np.sum(values_numpy)
+        
+        valid_probs = self.valid_probs(probs.numpy(), valids)
+        
+        returns = self.calculate_future_returns(rewards, valid_probs, values_numpy)
+        sum_returns = np.sum(returns)
+        sum_rewards = np.sum(rewards)
+                        
+        #
+        # Critic losses
+        #
+        diff = values - returns
+        episode_ctiric_loss = tf.reduce_sum(diff*diff)
+        if False:
+            print("rewards:", rewards)
+            print("returns:", returns)
+            print("values: ", values_numpy)
+            print("diffs:  ", diff.numpy())
+            print("critic loss:", episode_ctiric_loss.numpy())  #, " <==============" if episode_ctiric_loss.numpy() > 1.0 else "")
+        critic_losses.append(episode_ctiric_loss)
+
+        #
+        # Actor losses
+        #
+        advantages = (returns - values).numpy()
+        sum_advantages = np.sum(advantages)
+        #print(returns.shape, values.shape, diffs.shape)
+        action_mask = np.zeros(probs.shape)
+        for i, action in enumerate(actions):
+            action_mask[i, action] = 1.0
+        #print(logprobs.shape, action_mask.shape, diffs.shape)
+        action_probs = tf.reduce_sum(probs*action_mask, axis=-1)
+        logprobs = tf.math.log(tf.clip_by_value(action_probs, 1e-5, 1-1e-5))
+        problosses = -logprobs * advantages
+        episode_actor_loss = tf.reduce_sum(problosses)
+        actor_losses.append(episode_actor_loss)
+        
+        #
+        # Invalid actions loss - used to unconditionally reduce the probability of invalid actions
+        #
+        
+        if valids is not None:  
+            # invalid action losses
+            eposide_invalid_action_loss = tf.reduce_sum(probs*probs*(1-valids))
+            invalid_action_losses.append(eposide_invalid_action_loss)
+        #    
+        # Entropy loss - used prevent "bad" actions probabilities to go to complete zero, to encourage exploration 
+        #
+        entropy_per_step = -tf.reduce_sum(probs*tf.math.log(tf.clip_by_value(probs, 1e-5, 1.0)), axis=-1)/log_n_actions            
+        episode_entropy_loss = -tf.reduce_sum(entropy_per_step)
+        entropy_losses.append(episode_entropy_loss)
+        
+        if False:
+            entropy = entropy_per_step.numpy()
+            print("--------- Brain.train_on_multi_episode_history: episode:")
+            print("  rewards:    ", rewards)
+            print("  returns:    ", returns)
+            print("  values:     ", values_numpy)
+            print("  probs[a]:   ", action_probs.numpy())
+            print("  advantages: ", advantages)
+            print("  logplosses: ", problosses.numpy())
+            print("  entropy:    ", entropy)
+        
+        
+        return dict(
+            entropy=entropy_losses,
+            critic=critic_losses,
+            actor=actor_losses,
+            invalids=invalid_action_losses,
+            sum_values = sum_values,
+            sum_advantages = sum_advantages,
+            sum_rewards = sum_rewards,
+            sum_returns = sum_returns
+        )
+        
     def train_on_multi_episode_history(self, multi_ep_history):
         #
         # multi_ep_history is dictionary list of dictionaries{"observations":..., "actions":..., "returns":...}, one entry per episode
@@ -282,7 +376,6 @@ class Brain(object):
         huber_loss = keras.losses.Huber()
         mse = keras.losses.MeanSquaredError()
         total_steps = 0
-        log_n_actions = math.log(self.NActions)
         
         sum_values = 0.0
         sum_advantages = 0.0
@@ -296,82 +389,22 @@ class Brain(object):
             entropy_losses = []
             
             for h in multi_ep_history:
-                rewards = h["rewards"]
-                observations = h["observations"]
-                actions = h["actions"]
-                valids = h["valids"]
-                T = len(actions)
+                stats = self.losses_from_episode(h)
+                actor_losses += stats["actor"]
+                invalid_action_losses += stats["invalids"]
+                critic_losses += stats["critic"]
+                entropy_losses += stats["entropy"]
+                T = len(h["actions"])
                 total_steps += T
-                                
-                #print("episode observations shape:", observations.shape)
-                probs, values = self.Model(observations)
-                values = values[:,0]
-                if False:
-                    print("probs:", probs.numpy())
-                values_numpy = values.numpy()
-                sum_values += np.sum(values_numpy)
                 
-                valid_probs = self.valid_probs(probs.numpy(), valids)
-                
-                returns = self.calculate_future_returns(rewards, valid_probs, values_numpy)
-                sum_returns += np.sum(returns)
-                sum_rewards += np.sum(rewards)
-                                
-                # critic losses
-                #print("mse(",returns[:,None], values,")")
-                diff = values - returns
-                episode_ctiric_loss = tf.reduce_sum(diff*diff)
-                if False:
-                    print("rewards:", rewards)
-                    print("returns:", returns)
-                    print("values: ", values_numpy)
-                    print("diffs:  ", diff.numpy())
-                    print("critic loss:", episode_ctiric_loss.numpy())  #, " <==============" if episode_ctiric_loss.numpy() > 1.0 else "")
-                critic_losses.append(episode_ctiric_loss)
-
-                # actor losses
-                advantages = (returns - values).numpy()
-                sum_advantages = np.sum(advantages)
-                #print(returns.shape, values.shape, diffs.shape)
-                action_mask = np.zeros(probs.shape)
-                for i, action in enumerate(actions):
-                    action_mask[i, action] = 1.0
-                #print(logprobs.shape, action_mask.shape, diffs.shape)
-                action_probs = tf.reduce_sum(probs*action_mask, axis=-1)
-                logprobs = tf.math.log(tf.clip_by_value(action_probs, 1e-5, 1-1e-5))
-                problosses = -logprobs * advantages
-                episode_actor_loss = tf.reduce_sum(problosses)
-                actor_losses.append(episode_actor_loss)
-                
-                # entropy
-                entropy = -(np.sum(valid_probs*np.log(np.clip(valid_probs, 1e-5, None)), axis=-1)/log_n_actions)
-                if False:
-                    print("--------- Brain.train_on_multi_episode_history: episode:")
-                    print("  rewards:    ", rewards)
-                    print("  returns:    ", returns)
-                    print("  values:     ", values_numpy)
-                    print("  probs[a]:   ", action_probs.numpy())
-                    print("  advantages: ", advantages)
-                    print("  logplosses: ", problosses.numpy())
-                    print("  entropy:    ", entropy)
-                
-                
-                if valids is not None:  
-                    # invalid action losses
-                    eposide_invalid_action_loss = tf.reduce_sum(probs*probs*(1-valids))
-                    invalid_action_losses.append(eposide_invalid_action_loss)
-                else:
-                    eposide_invalid_action_loss = tf.convert_to_tensor(0.0)
-                invalid_action_losses.append(eposide_invalid_action_loss)
-                    
-                # entropy loss
-                entropy = -tf.reduce_sum(probs*tf.math.log(tf.clip_by_value(probs, 1e-5, 1.0)))/log_n_actions        # so that = 1 if the p distribution is uniform
-                episode_entropy_loss = -entropy
-                entropy_losses.append(episode_entropy_loss)
+                sum_values += stats["sum_values"]
+                sum_advantages += stats["sum_advantages"]
+                sum_returns += stats["sum_returns"] 
+                sum_rewards += stats["sum_rewards"] 
                 
             actor_loss = sum(actor_losses)
             critic_loss = sum(critic_losses)
-            invalid_action_loss = sum(invalid_action_losses)
+            invalid_action_loss = sum(invalid_action_losses) if invalid_action_losses else tf.convert_to_tensor(0.0)
             entropy_loss = sum(entropy_losses)
             total_loss = (
                 actor_loss 
@@ -426,7 +459,13 @@ class Agent(object):
         observation_history = []
         valids_history = []
         
-        state = env.reset()
+        self.Brain.reset_episode()
+        tup = env.reset()
+        # the env may return either just the state, or a tuple, (state, metadata)
+        if len(tup) == 2:
+            state, meta = tup
+        else:
+            state, meta = tup, {}
         #print("p:", " ", state)
         self.EpisodeReward = 0.0
         done = False
@@ -437,13 +476,24 @@ class Agent(object):
             if not isinstance(state, list):
                 state = [state]                 # always a list of np arrays
             probs = self.Brain.probs(state)
-            action = self.Brain.policy(probs, training)
+            valid_actions = meta.get("valid_actions")       # None if not there
+            action = self.Brain.policy(probs, training, valid_actions=valid_actions)
+            if False:
+                print("state:", state)
+                print("probs:", probs)
+                print("action:", action)
+            
             observation_history.append(state)
             action_history.append(action)
             action_probs_history.append(probs)
             
             state, reward, done, meta = env.step(action)
             #print("p:", action, state, reward, done)
+            
+            if valid_actions is not None:
+                # assume it's consistent through the episode
+                valids_history.append(valid_actions)
+
             if render:
                 env.render()
             
@@ -457,20 +507,14 @@ class Agent(object):
             self.RunningReward = self.EpisodeReward
         else:
             self.RunningReward += self.Alpha*(self.EpisodeReward - self.RunningReward)
-        if observation_history:
-            obs0 = observation_history[0]
-            if isinstance(obs0, list):
-                # multi-array observation
-                observation_history = [np.array(column) for column in zip(*observation_history)]
-            else:
-                observation_history = np.array(observation_history)
+        #print("Agent.play_episode: episode reward:", self.EpisodeReward, "  running reward ->", self.RunningReward)
         self.EpisodeHistory = dict(
             rewards = np.array(rewards_history),
             observations = observation_history,
             actions = np.array(action_history),
             probs = np.array(action_probs_history),
             episode_reward = self.EpisodeReward,
-            valids = None       # not used for now
+            valids = np.array(valids_history) if valids_history else None      
         )
         
         return self.EpisodeHistory

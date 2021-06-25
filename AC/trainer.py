@@ -44,28 +44,30 @@ class Trainer(TrainerBase):
         self.KeepRatio = replay_ratio
         self.HistoryBuffer = []
         
+    def callbacks(self, callbacks, method, *params, **args):
+        for callback in callbacks:
+            if hasattr(callback, method):
+                getattr(callback, method)(*params, **args)
+        
+        
     def train(self, env, target_reward=None, max_episodes=None, max_steps_per_episode=None,
-            print_every=10, episodes_per_batch=5, callbacks=[]):
+            episodes_per_batch=5, callbacks=[]):
             
         self.HistoryBuffer = []
         rewards_history = []
 
-        running_reward = None
         episodes = 0
         while max_episodes is None or episodes < max_episodes:
+            self.callbacks(callbacks, "before_train_episode", self.Agent)
             history = self.Agent.play_episode(env, max_steps_per_episode, training=True)
             episode_reward = self.Agent.EpisodeReward
+            running_reward = self.Agent.RunningReward
             self.HistoryBuffer.append(history)
             episodes += 1
             rewards_history.append(episode_reward)
-            if running_reward is None:
-                running_reward = episode_reward
+            
+            self.callbacks(callbacks, "train_episode_end", self.Agent, episode_reward, history)
 
-            for callback in callbacks:
-                if hasattr(callback, "train_episode_end"):
-                    callback.train_episode_end(self.Agent, episode_reward, history)
-
-            running_reward += self.Alpha * (episode_reward-running_reward)
             self.HistoryBuffer = self.train_on_buffer(self.HistoryBuffer, self.Agent.Brain, episodes_per_batch, callbacks)   
             
             if target_reward is not None and running_reward >= target_reward:
