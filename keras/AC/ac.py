@@ -57,7 +57,7 @@ class Brain(object):
         if model is None:   
             model = self.default_model(input_shape, num_actions, hidden)
         self.Model = model
-        if optimizer is None:   optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+        if optimizer is None:   optimizer = keras.optimizers.SGD(learning_rate=learning_rate)
         self.Optimizer = optimizer
         self.Cutoff = cutoff
         self.Beta = beta
@@ -79,6 +79,18 @@ class Brain(object):
     def get_weights(self):
         return self.Model.get_weights()
         
+    def weights_as_dict(self):
+        out = {}
+        for l in self.Model.layers:
+            w = l.get_weights()
+            if w is not None:
+                if isinstance(w, list):
+                    for i, wi in enumerate(w):
+                        out[l.name+f"_{i}"] = wi
+                else:
+                    out[l.name] = w
+        return out
+
     def set_weights(self, weights):
         self.Model.set_weights(weights)
 
@@ -92,13 +104,13 @@ class Brain(object):
     def default_model(self, input_shape, num_actions, hidden):
         inputs = layers.Input(shape=input_shape, name="input")
         common1 = layers.Dense(hidden, activation="relu", name="common1")(inputs)
-        common = layers.Dense(hidden/2, activation="relu", name="common")(common1)
+        common = layers.Dense(hidden//2, activation="relu", name="common")(common1)
 
-        action1 = layers.Dense(max(hidden/5, num_actions)/2, activation="relu", name="action1")(common)
-        action = layers.Dense(num_actions, activation="softmax", name="action")(action1)
+        #action1 = layers.Dense(max(hidden//5, num_actions*2), activation="relu", name="action1")(common)
+        action = layers.Dense(num_actions, activation="softmax", name="action")(common)
         
-        critic1 = layers.Dense(hidden/5, name="critic1", activation="softplus")(common)
-        critic = layers.Dense(1, name="critic")(critic1)
+        #critic1 = layers.Dense(hidden//5, name="critic1", activation="softplus")(common)
+        critic = layers.Dense(1, name="critic")(common)
 
         return keras.Model(inputs=[inputs], outputs=[action, critic])
         
@@ -261,7 +273,14 @@ class Brain(object):
             value_weights = np.ones((len(rewards),)) * self.Beta
         return _calc_retruns(self.Gamma, rewards, value_weights, values)
 
-        
+    def advantages_gae(self, rewards, probs, values):
+        T = len(rewards)
+        deltas = np.empty_like(rewards)
+        deltas[:-1] = rewards[:-1] + self.Gamma * values[1:]
+        deltas[-1] = rewards[-1]
+        gamma_lambda_powers = (self.Gamma*self.Lambda)**np.arange(len(rewards))
+        return np.array([np.sum(gamma_lambda_powers[:T-t]*deltas[t:]) for t in range(T)])
+
     def valid_probs(self, probs, valid_masks):
         if valid_masks is not None and valid_masks[0] is not None:
             probs = valid_masks * probs
@@ -280,6 +299,7 @@ class Brain(object):
         observations = h["observations"]
         actions = h["actions"]
         valids = h["valids"]
+        T = len(actions)
 
         # transpose observations history
         xcolumns = [np.array(column) for column in zip(*observations)]
@@ -306,7 +326,7 @@ class Brain(object):
             print("returns:", returns)
             print("values: ", values_numpy)
             print("diffs:  ", diff.numpy())
-            print("critic loss:", episode_ctiric_loss.numpy())  #, " <==============" if episode_ctiric_loss.numpy() > 1.0 else "")
+            print("critic loss per step:", episode_ctiric_loss.numpy()/T)  #, " <==============" if episode_ctiric_loss.numpy() > 1.0 else "")
         critic_losses.append(episode_ctiric_loss)
 
         #
@@ -336,20 +356,20 @@ class Brain(object):
         #    
         # Entropy loss - used prevent "bad" actions probabilities to go to complete zero, to encourage exploration 
         #
-        entropy_per_step = -tf.reduce_sum(probs*tf.math.log(tf.clip_by_value(probs, 1e-5, 1.0)), axis=-1)/log_n_actions            
+        entropy_per_step = -tf.reduce_sum(probs*tf.math.log(tf.clip_by_value(probs, 1e-5, 1.0)), axis=-1)            
         episode_entropy_loss = -tf.reduce_sum(entropy_per_step)
         entropy_losses.append(episode_entropy_loss)
         
         if False:
             entropy = entropy_per_step.numpy()
             print("--------- Brain.train_on_multi_episode_history: episode:")
-            print("  rewards:    ", rewards)
+            #print("  rewards:    ", rewards)
             print("  returns:    ", returns)
             print("  values:     ", values_numpy)
             print("  probs[a]:   ", action_probs.numpy())
             print("  advantages: ", advantages)
             print("  logplosses: ", problosses.numpy())
-            print("  entropy:    ", entropy)
+            #print("  entropy:    ", entropy)
         
         
         return dict(
@@ -380,7 +400,7 @@ class Brain(object):
         sum_values = 0.0
         sum_advantages = 0.0
         sum_returns = sum_rewards = 0.0
-
+        
         with tf.GradientTape() as tape:
             
             critic_losses = []
@@ -413,13 +433,16 @@ class Brain(object):
                 + entropy_loss*self.EntropyWeight
             )
 
-            if False:
-                print("Losses: critic:", critic_loss.numpy()/total_steps, 
-                    "  actor:", actor_loss.numpy()/total_steps, 
-                    "  invalid:", invalid_action_loss.numpy()/total_steps, 
-                    "  entropy:", entropy_loss.numpy()/total_steps)
+            if True:
+                print("Train on episodes:", len(multi_ep_history), "   steps:", total_steps)
+                print("    Losses per step: critic:", critic_loss.numpy()/total_steps, 
+                     "  actor:", actor_loss.numpy()/total_steps, 
+                     "  invalid:", invalid_action_loss.numpy()/total_steps, 
+                     "  entropy:", entropy_loss.numpy()/total_steps)
             
             grads = tape.gradient(total_loss, self.Model.trainable_variables)
+
+        grads2 = [np.mean(g.numpy()**2)/total_steps for g in grads]
 
         self.Optimizer.apply_gradients(zip(grads, self.Model.trainable_variables))
         averages = dict(
@@ -430,7 +453,8 @@ class Brain(object):
             average_reward = sum_rewards/total_steps,
             average_return = sum_returns/total_steps,
             average_value = sum_values/total_steps,
-            average_advantage = sum_advantages/total_steps
+            average_advantage = sum_advantages/total_steps,
+            average_grad_squared = grads2
         )
             
         # per_episode_losses is a dictionary:
@@ -462,7 +486,7 @@ class Agent(object):
         self.Brain.reset_episode()
         tup = env.reset()
         # the env may return either just the state, or a tuple, (state, metadata)
-        if len(tup) == 2:
+        if isinstance(tup, tuple) and len(tup) == 2:
             state, meta = tup
         else:
             state, meta = tup, {}
@@ -475,11 +499,14 @@ class Agent(object):
             #print("calculating probs...")
             if not isinstance(state, list):
                 state = [state]                 # always a list of np arrays
+                
+            if False:
+                print("state:", state)
+            
             probs = self.Brain.probs(state)
             valid_actions = meta.get("valid_actions")       # None if not there
             action = self.Brain.policy(probs, training, valid_actions=valid_actions)
             if False:
-                print("state:", state)
                 print("probs:", probs)
                 print("action:", action)
             

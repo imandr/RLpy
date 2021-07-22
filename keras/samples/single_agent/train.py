@@ -1,17 +1,18 @@
 from tank_target_env import TankTargetEnv
 from walker_env import WalkerEnv
+from cartpole_env import CartPoleEnv
 from AC import Brain, Agent, Trainer
 from util import Monitor
 import numpy as np
 from tensorflow import keras
-import sys, getopt
+import sys, getopt, math
 
 Usage = """
 python train.py [-l <file>] [-s <file>] [-w <file>] <environment name>
   -s <file>    - save weights into the file
   -l <file>    - load weights from the file in the beginning
   -w <file>    - equivalent to -s <file> -l <file>
-  environment name - either "tanks" or "walker" or any suitable gym environment name
+  environment name - "tanks", "walker", "cartpole" or any suitable gym environment name
 """
 
 class MovingAverage(object):
@@ -43,6 +44,14 @@ EnvParams = {
     "CartPole-v0":  {
         "target":   195.0,
         "max_steps_per_episode":    200
+    },
+    "cartpole":  {
+        "gamma":    0.9,
+        "learning_rate":    0.01,
+        "entropy_weight":   0.001,
+        "target":   -0.01,
+        "max_steps_per_episode":    200,
+        "max_episodes":     10000
     },
     "*":    {       # default parameters
         "gamma":    0.99,
@@ -92,12 +101,15 @@ max_episodes = params["max_episodes"]
 entropy_weight = params["entropy_weight"]
 critic_weight = params["critic_weight"]
 
-optimizer = keras.optimizers.Adagrad(learning_rate=learning_rate)
+#optimizer = keras.optimizers.SGD(learning_rate=learning_rate, momentum=0.5)
+optimizer = keras.optimizers.Adagrad(learning_rate=learning_rate)   #, momentum=0.5)
 
 if env_name == "tanks":
     env = TankTargetEnv()
 elif env_name == "walker":
     env = WalkerEnv()
+elif env_name == "cartpole":
+    env = CartPoleEnv()
 else:
     import gym
     env = gym.make(env_name)
@@ -196,8 +208,8 @@ class UpdateMonitorCallback(object):
 
 class Callback(object):
     
-    PlayInterval = 200
-    ReportInterval = 10
+    PlayInterval = 50
+    ReportInterval = 1
     
     def __init__(self):
         self.NextPlay = self.PlayInterval
@@ -215,6 +227,7 @@ class Callback(object):
                             stats["average_value"], stats["average_return"], stats["average_advantage"]
                         )
             )
+            print("   rms(grads):", [math.sqrt(g2) for g2 in stats["average_grad_squared"]])
             self.NextReport += self.ReportInterval
         if self.Episodes >= self.NextPlay:
             for _ in range(3):
