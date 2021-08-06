@@ -36,32 +36,27 @@ def _calc_retruns(gamma, rewards, value_weights, values):
         t -= 1
     return returns
     
-class EntropyLoss(Loss):
-    
-    def compute(self, data):
-        probs = self.Inputs[0].Y
+def entropy_loss(_, probs, data):
+        valid_mask=data.get("valid_actions")
         p = np.clip(probs, 1e-5, None)
         values = -np.sum(p*np.log(p), axis=-1)
         grads = np.log(p)+1.0
+        if valid_mask is not None:
+            grads = grads * valid_mask
         n = probs.shape[-1]
         logn = math.log(n)
         k = abs(logn-1.0)/n
-        #print("Entropy loss: k=", k)
-        self.Grads = [grads*k]
-        self.Values = values/logn  
-        return self.value
+        return values/logn, grads*k
 
-class ActorLoss(Loss):
-    
-    def compute(self, data):
-        returns = data["returns"]
-        actions = data["actions"]
-        probs, values = self.Inputs[0].Y, self.Inputs[1].Y
+def actor_loss(_, probs, values, data):
         probs_shape = probs.shape
         mb = probs_shape[0]
         na = probs_shape[-1]
         values_shape = values.shape
         
+        returns = data["returns"]
+        actions = data["actions"]
+
         probs = probs.reshape((-1, probs_shape[-1]))
         values = values.reshape((-1,))
         actions = actions.reshape((-1,))
@@ -80,39 +75,28 @@ class ActorLoss(Loss):
 
         grads = grads.reshape(probs_shape)
         
-        self.Grads = [grads, None]
-        self.Values = -advantages*np.log(np.clip(action_probs, 1.e-5, None)).reshape(values_shape)          # not really loss values
+        losses = -advantages*np.log(np.clip(action_probs, 1.e-5, None)).reshape(values_shape)          # not really loss values
+        return losses, [grads, None]
 
-        if False:
-            print("ActorLoss:")
-            #print("      probs:", probs)
-            #print("    actions:", actions)
-            print("    returns:", returns)
-            print("     values:", values)
-            print("   probs[a]:", action_probs)
-            print("  advatages:", advantages)
-            print("  logplosses: ", self.Values)
-            
-            #print("action_mask:", action_mask)
-            #print(" loss_grads:", loss_grads)
-            #print("      grads:", grads)
-
-
-        return self.value
-
-class InvalidActionLoss(Loss):
+def invalid_actions_loss(_, probs, data):
+    valid_mask=data.get("valid_actions")
+    if valid_mask is not None:
+        losses = np.mean(probs*probs*(1-valid_mask), axis=-1)
+        grads = 2*(1-valid_mask)*probs
+    else:
+        losses = np.zeros((len(probs),))
+        grads = None
+    #print("invalid_actions_loss: losses:", losses, "   grads:", grads)
+    return losses, grads
     
-    def compute(self, data):
-        probs = self.Inputs[0].Y
-        valid_mask = data.get("valids")
-        if valid_mask is not None:
-            self.Values = np.mean(probs*probs*(1-valid_mask), axis=-1)
-            self.Grads = [2*(1-valid_mask)*probs]
-        else:
-            self.Values = np.zeros((len(probs),))
-            self.Grads = [None]
-        return self.value
-
+    
+def critic_loss(_, values, data):
+    returns = data["returns"]
+    d = values - returns[:,None]
+    losses = d*d
+    grads = 2*d
+    return losses, grads
+    
 class Brain(object):
     
     def __init__(self, input_shape=None, num_actions=None, model=None, optimizer=None, hidden=128, gamma=0.99, 
@@ -146,11 +130,18 @@ class Brain(object):
             model = self.default_model(input_shape, num_actions, hidden) if not with_rnn \
                     else self.default_rnn_model(input_shape, num_actions, hidden)
 
-        model.add_loss(ActorLoss(model["probs"], model["value"]), actor_weight, name="actor_loss")
-        model.add_loss(get_loss("mse")(model["value"]), critic_weight, name="critic_loss")
-        model.add_loss(EntropyLoss(model["probs"]), entropy_weight, name="entropy_loss")
-        model.add_loss(InvalidActionLoss(model["probs"]), invalid_action_weight, name="invalid_action_loss")
-        model.compile(optimizer=self.Optimizer)
+            # .add_loss(Loss("mse", model["value"]),                        critic_weight, name="critic_loss")  \
+        model   \
+            .add_loss(Loss(critic_loss, model["value"]),                   critic_weight, name="critic_loss")  \
+            .add_loss(Loss(actor_loss, model["probs"], model["value"]),    actor_weight, name="actor_loss")     \
+            .add_loss(Loss(entropy_loss, model["probs"]),                  entropy_weight, name="entropy_loss") \
+            .add_loss(Loss(invalid_actions_loss, model["probs"]),          invalid_action_weight, name="invalid_action_loss")   \
+            .compile(optimizer=self.Optimizer)
+            
+        if True:
+            print("model losses and weights:")
+            for name, (loss, weight) in model.Losses.items():
+                print(f"{name}: {loss} * {weight}")
 
         self.Model = model
         
@@ -187,11 +178,11 @@ class Brain(object):
         common1 = Dense(hidden, activation="relu", name="common1")(inp)
         common = Dense(hidden//2, activation="relu", name="common")(common1)
 
-        #action1 = Dense(max(hidden//5, num_actions//2), activation="relu", name="action1")(common)
-        probs = Dense(num_actions, name="action", activation="softmax")(common)
+        action1 = Dense(max(hidden//5, num_actions*5), activation="relu", name="action1")(common)
+        probs = Dense(num_actions, name="action", activation="softmax")(action1)
         
-        #critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
-        value = Dense(1, name="critic")(common)
+        critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
+        value = Dense(1, name="critic")(critic1)
 
         model = Model([inp], [probs, value])
         
@@ -311,6 +302,11 @@ class Brain(object):
                 ret += values[t+cutoff]*self.Gamma**cutoff
             #print("t:", t, "   ret:", ret)
             rets[t] = ret
+        if False:
+            print("calculate_future_returns_with_cutoff: gamma=", self.Gamma, "  cutoff=", cutoff)
+            print("  rewards:", rewards)
+            print("  powers: ", gamma_powers)
+            print("  returns:", rets)
         return rets
         
     def calculate_future_returns(self, rewards, probs, values):
@@ -341,7 +337,7 @@ class Brain(object):
         rewards = h["rewards"]
         observations = h["observations"]
         actions = h["actions"]
-        valids = h["valids"]
+        valids = h["valid_actions"]
         T = len(actions)
 
         # transpose observations history
@@ -462,11 +458,10 @@ class RNNBrain(Brain):
         dense = Dense(hidden, activation="relu", name="dense_base")(obs)
         concatenated = Concatenate()(rnn, dense)
         common = Dense(hidden, activation="relu", name="common")(concatenated)
-        probs = Dense(n_actions, activation="softmax")(common)
-        values = Dense(1, name="dense_value")(concatenated)
+        probs = Dense(n_actions, activation="softmax", name="probs")(common)
+        values = Dense(1, name="values")(concatenated)
 
         model = Model(obs, [probs, values])
-
         model["value"] = values
         model["probs"] = probs
     
@@ -484,7 +479,7 @@ class RNNBrain(Brain):
         if not isinstance(states, list):
             states = [states]
         states = [s[None, ...] for s in states]        # add minibatch and t dimension
-        probs, values = self.Model.compute(states)          # add minibatch dimension
+        probs, values = self.Model.compute(states)          
         #for l in self.Model.links():
         #    print(l,":",l.Layer, ": Y=", None if l.Y is None else l.Y.shape)
         return probs[0], values[0,:,0]

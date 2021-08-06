@@ -3,6 +3,8 @@ from cartpole_env import CartPoleEnv
 from walker_env import WalkerEnv
 from blackjack import SimpleBlackJackEnv
 from ascention import AscentionEnv
+from sequence_env import SequenceEnv
+from ttt_env import SingleAgentTicTacToeEnv
 from counter import CounterEnv
 from AC import Brain, Agent, Trainer, RNNBrain
 from util import Monitor
@@ -36,6 +38,14 @@ EnvParams = {
         "entropy_weight":   0.01,
         "cutoff":   10
     },
+    "ttt":    {
+        "hidden":   400,
+        "target":   1000.0,
+        "cutoff":   10,
+        "entropy_weight":   0.01,
+        "invalid_action_weight":    100.0,
+        "gamma": -1.0
+    },
     "walker":   {
         "gamma":    0.9,
         "cutoff":   100,
@@ -64,6 +74,15 @@ EnvParams = {
         "entropy_weight":   0.0001,
         "actor_weight":    1.0,
         "cutoff":           1
+    },
+    "sequence":  {
+        "rnn":  True,
+        "gamma":    0.9,
+        "target":   100,
+        "max_steps_per_episode":    50,
+        "learning_rate":    0.01,
+        "entropy_weight":   0.01,
+        "cutoff":           10
     },
     "blackjack":  {
         "rnn":  False,
@@ -99,6 +118,8 @@ EnvParams = {
         "cutoff":           100
     },
     "*":    {       # default parameters
+        "hidden":   200,
+        "rnn":  False,
         "gamma":    0.99,
         "epsilon":  0.0,
         "cutoff":   1,
@@ -107,6 +128,7 @@ EnvParams = {
         "entropy_weight":   0.001,
         "critic_weight":    0.5,
         "actor_weight":    1.0,
+        "invalid_action_weight":    5.0,
         "max_steps_per_episode":    100,
         "max_episodes":     100000,
         "steps_per_batch":  100
@@ -138,7 +160,7 @@ learning_rate = params["learning_rate"]
 cutoff = params["cutoff"]
 max_steps_per_episode = params["max_steps_per_episode"]
 port = 8989
-hidden = 200
+hidden = params["hidden"]
 with_rnn = params["rnn"]
 beta = params["beta"]
 epsilon = params["epsilon"]
@@ -149,11 +171,14 @@ steps_per_batch = params["steps_per_batch"]
 entropy_weight = params["entropy_weight"]
 critic_weight = params["critic_weight"]
 actor_weight = params["actor_weight"]
+invalid_action_weight = params["invalid_action_weight"]
 
 if env_name == "tanks":
     env = TankTargetEnv()
 elif env_name == "walker":
     env = WalkerEnv()
+elif env_name == "ttt":
+    env = SingleAgentTicTacToeEnv()
 elif env_name == "cartpole":
     env = CartPoleEnv()
 elif env_name == "blackjack":
@@ -162,6 +187,8 @@ elif env_name == "ascention":
     env = AscentionEnv()
 elif env_name == "counter":
     env = CounterEnv()
+elif env_name == "sequence":
+    env = SequenceEnv(10, 5)
 else:
     import gym
     env = gym.make(env_name)
@@ -196,8 +223,10 @@ monitor = Monitor("monitor.csv",
             }            
         ],
         [
-            {   "label":    "critic loss"   },
             {   "label":    "actor loss"   }
+        ],
+        [
+            {   "label":    "critic loss"   }
         ],
         [
             {   "label":    "entropy", "line_width": 1.0   },
@@ -266,8 +295,8 @@ class UpdateMonitorCallback(object):
 
 class Callback(object):
     
-    PlayInterval = 500
-    ReportInterval = 10
+    PlayInterval = 1000
+    ReportInterval = 100
     
     def __init__(self):
         self.NextPlay = self.PlayInterval
@@ -316,7 +345,8 @@ brain = brain_class((num_inputs,), num_actions, model=model,
     optimizer = optimizer,
     actor_weight = actor_weight,
     critic_weight = critic_weight,
-    entropy_weight = entropy_weight
+    entropy_weight = entropy_weight,
+    invalid_action_weight = invalid_action_weight
     )
 
 if load_from:

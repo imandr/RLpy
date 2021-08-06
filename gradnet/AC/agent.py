@@ -22,7 +22,7 @@ class Agent(object):
         valids_history = []
         
         if False:
-            print("---")
+            print("--- beginn episode ---")
         self.Brain.reset_episode()
 
         tup = env.reset()
@@ -41,6 +41,7 @@ class Agent(object):
             if not isinstance(state, list):
                 state = [state]                 # always a list of np arrays
                 
+            #print("Agent.play_episode: state:", state)
             probs, value = self.Brain.evaluate_single(state)
             valid_actions = meta.get("valid_actions")       # None if not there
             action = self.Brain.policy(probs, training, valid_actions=valid_actions)
@@ -80,7 +81,7 @@ class Agent(object):
             actions = np.array(action_history),
             probs = np.array(action_probs_history),
             episode_reward = self.EpisodeReward,
-            valids = np.array(valids_history) if valids_history else None      
+            valid_actions = np.array(valids_history) if valids_history else None      
         )
         
         return self.EpisodeHistory
