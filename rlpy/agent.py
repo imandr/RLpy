@@ -1,9 +1,10 @@
 import random, math
 import numpy as np
+from .util import CallbackList
 
 class Agent(object):
 
-    def __init__(self, brain, alpha=0.01):
+    def __init__(self, brain, alpha=0.001):
         self.Brain = brain
         self.RunningReward = None
         self.Alpha = alpha
@@ -11,18 +12,30 @@ class Agent(object):
         self.resetRunningReward()
 
     def resetRunningReward(self):
-        self.RunningReward = None
+        self.RunningReward = 0.0
                 
-    def play_episode(self, env, max_steps=None, render=False, training=False):
+    def play_episode(self, env, max_steps=None, render=False, training=False, callbacks=None):
+
+        callbacks = CallbackList.convert(callbacks)
+
         action_probs_history = []
         rewards_history = []
         action_history = []
+        #controls_history = []
         observation_history = []
         valids_history = []
+        values_history = []
+        meta_history = []
+        probs_history = []
         
+
         if False:
             print("--- beginn episode ---")
+            
         self.Brain.reset_episode()
+
+        if callbacks:
+            callbacks("agent_episode_begin", self, training=training, render=render)
 
         tup = env.reset()
         # the env may return either just the state, or a tuple, (state, metadata)
@@ -30,7 +43,15 @@ class Agent(object):
             state, meta = tup
         else:
             state, meta = tup, {}
+
+        if render:
+            env.render()
+            
+        if callbacks:
+            callbacks("agent_episode_reset", self, state, meta)
+
         #print("p:", " ", state)
+        
         self.EpisodeReward = 0.0
         done = False
         steps = 0
@@ -39,27 +60,46 @@ class Agent(object):
             #print("calculating probs...")
             if not isinstance(state, list):
                 state = [state]                 # always a list of np arrays
+
+            observation_history.append(state)
                 
             #print("Agent.play_episode: state:", state)
-            probs, value = self.Brain.evaluate_single(state)
             valid_actions = meta.get("valid_actions")       # None if not there
-            action = self.Brain.policy(probs, training, valid_actions=valid_actions)
+            #action, controls = self.Brain.policy(probs, means, sigmas, training, valid_actions)
+
+            if valid_actions is not None:
+                # assume it's consistent through the episode
+                valids_history.append(valid_actions)
+
+            value, probs, action = self.Brain.action(state, valid_actions, training)
             
-            observation_history.append(state)
+            # probs is a structure describing the probabilities for various actions here 
+            # action can be:
+            # int - single discrete action
+            # float - single control
+            # ndarray of ints - multiple discrete actions
+            # ndarray of floats - multiple controls
+            # tuple (int or ndarray of ints, float or ndattay of floats)
+            
+            probs_history.append(probs)
             action_history.append(action)
-            action_probs_history.append(probs)
-            
+            values_history.append(value)
+
             new_state, reward, done, meta = env.step(action)
+            
+            if callbacks:
+                callbacks("agent_episode_step", self, action, new_state, reward, done, meta)
+
+            meta_history.append(meta)
+
             if False:
                 print("state:", state, "  probs:", probs, "  action:", action, "  reward:", reward, " new state:", new_state, "  done:", done)
             #print("p:", action, state, reward, done)
             
             state = new_state
+            prev_action = action
+            #prev_controls = controls
             
-            if valid_actions is not None:
-                # assume it's consistent through the episode
-                valids_history.append(valid_actions)
-
             if render:
                 env.render()
             
@@ -75,16 +115,18 @@ class Agent(object):
             self.RunningReward += self.Alpha*(self.EpisodeReward - self.RunningReward)
         #print("Agent.play_episode: episode reward:", self.EpisodeReward, "  running reward ->", self.RunningReward)
         self.EpisodeHistory = dict(
-            nsteps =  len(action_history),
             rewards = np.array(rewards_history),
             observations = observation_history,
-            actions = np.array(action_history),
-            probs = np.array(action_probs_history),
-            episode_reward = self.EpisodeReward,
-            valid_actions = np.array(valids_history) if valids_history else None      
+            actions = action_history,
+            probs = probs_history,
+            valid_actions = np.array(valids_history) if valids_history else None,
+            meta = meta_history
         )
+
+        if callbacks:
+            callbacks("agent_episode_end", self, self.EpisodeReward, self.EpisodeHistory)
         
-        return self.EpisodeHistory
+        return self.EpisodeReward, self.EpisodeHistory
         
     def episode_history(self):
         return self.EpisodeHistory
@@ -101,7 +143,9 @@ class MultiAgent(object):
         self.EpisodeReward = 0.0
         self.Alpha = alpha
         self.Reward = 0.0           # reward accunulated since last action
+        self.Training = None
         self.resetRunningReward()
+        self.History = []           # [(observation, action, reward)]
 
     def resetRunningReward(self):
         self.RunningReward = 0.0
@@ -114,19 +158,20 @@ class MultiAgent(object):
         self.Rewards = []
         self.Actions = []
         self.ValidActions = []
-        self.Values = []
         self.ProbsHistory = []
         self.FirstMove = True
         self.Done = False
+        self.PrevAction = -1
         #print("Agent[%d].reset()" % (id(self)%100,))
+        self.History = []           # [(observation, action, reward)]
         
-    def choose_action(self, observation, valid_actions=None, training=True):
-        probs, _ = self.Brain.evaluate_single(observation)
+    def choose_action(self, observation, valid_actions, training):
+        _, probs = self.Brain.evaluate_step(self.PrevAction, observation)
         action = self.Brain.policy(probs, training, valid_actions)
         self.ProbsHistory.append(probs)
         return action
         
-    def action(self, observation, valid_actions, training=True):
+    def action(self, observation, valid_actions=None):
         # this is reward for the previuous action
         
         if not isinstance(observation, list):     # make sure observation is a list of np.arrays
@@ -140,26 +185,35 @@ class MultiAgent(object):
         self.FirstMove = False
         self.EpisodeReward += self.Reward
         self.Reward = 0.0
-        action = self.choose_action(observation, valid_actions, training)
+        action = self.choose_action(observation, valid_actions, self.Training)
         self.Actions.append(action)
         #print("Agent[%d].action() -> %d" % (id(self)%100, action))
+        self.PrevAction = action
+        self.History.append((observation, action, None))
         return action
 
-    def reward(self, reward):
-        self.Reward += reward
+    def update(self, observation=None, reward=None):
+        if reward: self.Reward += reward
+        self.Observation = observation
+        self.History.append((observation, None, reward))
+        
         #print("Agent[%d].reward(%.4f) accumulated=%.4f" % (id(self)%100, reward, self.Reward))
         
-    def done(self, last_observation):
+    def done(self, last_observation, reward=0.0):
         #print("Agent[%d].done()" % (id(self)%100, ))
         #print("Agent[%d].done(reward=%f)" % (id(self)%100, reward))
         #print("Agent", id(self)%10, "done:", reward)
+        
+        self.Reward += reward
+        self.EpisodeReward += self.Reward
+        
         if not self.Done:
             if not self.FirstMove:
                 self.Rewards.append(self.Reward)
-            self.EpisodeReward += self.Reward
             self.Reward = 0.0
             self.RunningReward += self.Alpha*(self.EpisodeReward - self.RunningReward)
             self.Done = True
+            self.History.append((last_observation, None, reward))
         #self.Observations.append(observation)
         
     def episode_history(self):
@@ -170,7 +224,8 @@ class MultiAgent(object):
             "actions":          np.array(self.Actions),
             "valid_actions":    valids,
             "observations":     self.Observations,              # list of lists of ndarrays
-            "probs":            np.array(self.ProbsHistory)
+            "probs":            np.array(self.ProbsHistory),
+            "full_history":     self.History
         }
         #print("Agent[%d].history():" % (id(self)%100,), *((k, len(lst) if lst is not None else "none") for k, lst in out.items()))
         #print("          valids:", out["valids"])

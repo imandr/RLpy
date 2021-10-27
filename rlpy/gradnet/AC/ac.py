@@ -192,11 +192,11 @@ class Brain(object):
         common1 = Dense(hidden, activation="relu", name="common1")(inp)
         common = Dense(hidden//2, activation="relu", name="common")(common1)
 
-        action1 = Dense(max(hidden//5, num_actions*5), activation="relu", name="action1")(common)
-        probs = Dense(num_actions, name="action", activation="softmax")(action1)
+        #action1 = Dense(max(hidden//5, num_actions*5), activation="relu", name="action1")(common)
+        probs = Dense(num_actions, name="action", activation="softmax")(common)
         
-        critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
-        value = Dense(1, name="critic")(critic1)
+        #critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
+        value = Dense(1, name="critic")(common)
 
         model = Model([inp], [probs, value])
         
@@ -222,18 +222,18 @@ class Brain(object):
         action = np.random.choice(self.NActions, p=probs)
         return action
         
-    def evaluate_single(self, state):
+    def evaluate_step(self, prev_action, state):
         if not isinstance(state, list):
             state = [state]
         state = [s[None,...] for s in state]        # add minibatch dimension
         #print("evaluate_single: state shapes:", [s.shape for s in state])
         probs, values = self.Model.compute(state)        
-        return probs[0,:], values[0,0]
+        return values[0,0], probs[0,:] 
         
-    def evaluate_many(self, states):
+    def evaluate_sequence(self, prev_actions, states):
         #print("Brain.evaluate_many: states:", type(states), len(states))
         probs, values = self.Model.compute(states)
-        return probs, values[:,0]
+        return values[:,0], probs
         
     def save(self, filename):
         self.Model.save_weights(filename)
@@ -359,11 +359,13 @@ class Brain(object):
 
         # transpose observations history
         xcolumns = [np.array(column) for column in zip(*observations)]
+        prev_actions = np.roll(actions, 1)
+        prev_actions[0] = -1
 
         #print("episode observations shape:", observations.shape)
         #print("add_losses: reset_state()")
         self.Model.reset_state()
-        probs, values = self.evaluate_many(xcolumns)
+        values, probs = self.evaluate_sequence(prev_actions, xcolumns)
 
         valid_probs = self.valid_probs(probs, valids)
         returns = self.calculate_future_returns(rewards, valid_probs, values)
@@ -484,7 +486,7 @@ class RNNBrain(Brain):
     
         return model
 
-    def evaluate_single(self, state):
+    def evaluate_step(self, prev_action, state):
         if not isinstance(state, list):
             state = [state]
         state = [s[None, None, ...] for s in state]        # add minibatch and t dimension
@@ -492,7 +494,7 @@ class RNNBrain(Brain):
         probs, values = self.Model.compute(state)        
         return probs[0,0,:], values[0,0,0]
 
-    def evaluate_many(self, states):
+    def evaluate_sequence(self, prev_actions, states):
         if not isinstance(states, list):
             states = [states]
         states = [s[None, ...] for s in states]        # add minibatch and t dimension

@@ -56,6 +56,7 @@ class SingleAgentTicTacToeEnv(object):
     
     NActions = 9
     ObservationShape = (9,)
+    NState = 9
     
     def __init__(self):
         self.Board = np.zeros((9,))

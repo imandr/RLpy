@@ -1,5 +1,5 @@
 from rlpy.gradnet.AC import Brain
-from rlpy import MultiTrainer_Chain, ActiveGymEnvironment, MultiAgent, MultiTrainer_Independent, MultiTrainer_Sync
+from rlpy import MultiTrainer_Chain, ActiveEnvironment, MultiAgent, MultiTrainer_Independent, MultiTrainer_Sync, Callback
 import numpy as np, getopt, sys
 from util import Monitor, Smoothie
 import time
@@ -11,7 +11,7 @@ opts = dict(opts)
 load_from = opts.get("-l") or opts.get("-w")
 save_to = opts.get("-s") or opts.get("-w")
 brain_mode = opts.get("-b", "chain")        # or chain or sync
-nagents = int(opts.get("-n", 2))
+nagents = int(opts.get("-n", 1))
 env_name = args[0]
 
 alpha = None
@@ -20,21 +20,6 @@ if "-a" in opts:
 
 np.set_printoptions(precision=4, suppress=True)
 
-if env_name == "duel":
-    from tank_duel_env import TankDuelEnv
-    duel = True
-    hit_target = True
-    compete = False
-    env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
-elif env_name == "tanks_single":
-    from tank_target_env import TankTargetEnv
-    genv = TankTargetEnv()
-    env = ActiveGymEnvironment(genv)
-    nagents = 1
-else:
-    print(f"Unknown environemnt {env_name}")
-    sys.exit(1)
-
 cutoff = 10
 beta = 0.5
 gamma = 0.99
@@ -42,26 +27,58 @@ comment = ""
 learning_rate = 0.01
 max_steps_per_episode = 300
 port = 8989
-hidden = 200
+hidden = 300
 
-entropy_weight = 0.0
+entropy_weight = 0.01
 critic_weight = 0.5
 invalid_action_weight = 10.0
 cross_training = 0.0
 
+if env_name == "duel":
+    from tank_duel_env import TankDuelEnv
+    duel = True
+    hit_target = True
+    compete = True
+    brain_mode = "chain"
+    env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
+    nagents = 2
+elif env_name == "tanks_single":
+    from tank_target_env import TankTargetEnv
+    genv = TankTargetEnv()
+    env = ActiveEnvironment.from_gym_env(genv, max_steps_per_episode)
+    nagents = 1
+elif env_name == "ttt":
+    from ttt_env import TicTacToeEnv
+    env = TicTacToeEnv()
+    nagents = 2
+    gamma = 1.0
+    cutoff = 100
+    critic_weight = 1.0
+    alpha = 0.5
+    brain_mode="share"
+else:
+    import gym
+    env = ActiveEnvironment.from_gym_env(gym.make(env_name))
+    brain_mode="share"
+    nagents = 1
+
 optimizer = gradnet.optimizers.get_optimizer("adagrad", learning_rate=learning_rate) 
 
 if brain_mode == "share":
-    brain = Brain(env.observation_space.shape, env.action_space.n, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
+    brain = Brain(env.observation_space, env.action_space, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
         optimizer=optimizer, hidden=hidden,
         critic_weight=critic_weight, invalid_action_weight=invalid_action_weight)
     agents = [MultiAgent(brain) for _ in range(nagents)]
     trainer = MultiTrainer_Independent(env, agents)
 elif brain_mode in ("sync", "chain"):
-    brains = [Brain(env.observation_space.shape, env.action_space.n, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
+    brains = [Brain(env.observation_space, env.action_space, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
         optimizer=optimizer, hidden=hidden,
         critic_weight=critic_weight, invalid_action_weight=invalid_action_weight) for _ in range(nagents)
     ]
+    b0 = brains[0]
+    for brain in brains:
+        if not brain is b0:
+            brain.set_weights(b0.get_weights())
     agents = [MultiAgent(brain) for brain in brains]
     if brain_mode == "chain":
         trainer = MultiTrainer_Chain(env, agents, alpha=alpha)
@@ -77,9 +94,7 @@ plots=[
         } for i in range(nagents)
     ],
     [
-        {   "label":    "entropy low",  "line_width": 1.0   },
-        {   "label":    "entropy MA",  "line_width": 1.5   },
-        {   "label":    "entropy high",  "line_width": 1.0   }
+        {   "label":    "entropy moving average",  "line_width": 1.5   }
     ],
     [
         {   "label":    "critic loss MA"   },
@@ -94,8 +109,6 @@ monitor = Monitor("monitor.csv",
     metadata = dict(
         gamma=gamma,
         trainer=trainer.__class__.__name__,
-        hit_target = hit_target,
-        duel = duel,
         comment = comment,
         environment = str(env),
         learning_rate = learning_rate,
@@ -116,15 +129,16 @@ monitor = Monitor("monitor.csv",
 
 monitor.start_server(port)
 
-class SaveCallback(object):
+class SaveCallback(Callback):
     
     def __init__(self, save_to):
+        Callback.__init__(self)
         self.BestEntropy = None
         self.EntropyMA = None
         self.NImprovements = 3
         self.SaveTo = save_to
         self.Alpha = 0.1
-
+        
     def train_batch_end(self, brain, agents, batch_episodes, total_steps, avg_losses):
         entropy = -avg_losses["entropy"]
         if self.BestEntropy is None:
@@ -139,9 +153,10 @@ class SaveCallback(object):
                 brain.save(self.SaveTo)
                 print("Model saved to", self.SaveTo, "with entropy MA", self.EntropyMA)
 
-class UpdateMonitorCallback(object):
+class UpdateMonitorCallback(Callback):
     
     def __init__(self, monitor):
+        Callback.__init__(self, fire_interval=10)
         self.Episodes = 0
         self.Monitor = monitor
         self.EntropySmoothie = Smoothie(0.01)
@@ -159,9 +174,7 @@ class UpdateMonitorCallback(object):
         data = {
                 "critic loss MA":  clossma,
                 "actor loss":  avg_losses["actor_loss"],
-                "entropy low":  elow,
-                "entropy high":  ehigh,
-                "entropy MA":  ema,
+                "entropy moving average":  -ema,
                 #"invalid action loss":  avg_losses["invalid_action"]
             }
         for i, agent in enumerate(agents):
@@ -169,18 +182,10 @@ class UpdateMonitorCallback(object):
         
         self.Monitor.add(self.Episodes, data)
 
-class WatchCallback(object):
-
-    def __init__(self):
-        self.TotalSteps = 0
-        self.TotalEpisodes = 0
-        self.TStart = time.time()
-
-    def train_batch_end(self, brain, agents, batch_episodes, batch_steps, avg_losses):
-        self.TotalSteps += batch_steps
-        self.TotalEpisodes += batch_episodes
-        print("Traning rate:", self.TotalSteps/(time.time() - self.TStart))
-
+class WeightSyncCallback(Callback):
+    
+    def agent_synced(self, agent, alpha):
+        print("agent %d synced with alpha=%.3f" % (id(agent)%101, alpha))
 
 if load_from:
     [b.load(load_from) for b in brains]
@@ -190,14 +195,16 @@ mon_cb = UpdateMonitorCallback(monitor)
 save_cb =  SaveCallback(save_to)
 
 for epoch in range(1000):
-    trainer.train(max_episodes = 200, episodes_per_batch=5, callbacks=[mon_cb, save_cb])
+    trainer.train(max_episodes = 200, episodes_per_batch=5, callbacks=[mon_cb, save_cb, WeightSyncCallback()])
     print(f"====== end of training run. total episodes: {trainer.Episodes} ======")
     print("====== testing ======")
     scores = np.zeros((nagents,))
     for episode in range(5):
         env.run(trainer.Agents, training=False, render=True)
         winner = np.argmax([a.EpisodeReward for a in trainer.Agents])
-        scores[winner] += 1
+        loser = np.argmin([a.EpisodeReward for a in trainer.Agents])
+        if trainer.Agents[winner].EpisodeReward > trainer.Agents[loser].EpisodeReward:
+            scores[winner] += 1
     print("scores", scores)
 
         

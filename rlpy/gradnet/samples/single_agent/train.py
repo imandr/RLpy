@@ -1,14 +1,19 @@
 from tank_target_env import TankTargetEnv
 from cartpole_env import CartPoleEnv
+from cartpole_cont import CartPoleContinuousEnv
 from walker_env import WalkerEnv
 from blackjack import SimpleBlackJackEnv
+from game11 import Game11Env
+from game21 import Game21Env
 from ascention import AscentionEnv
+from cluster_analysis import ClusterEnv
+from cluster_analysis_k import ClusterKEnv
 from sequence_env import SequenceEnv
-from ttt_env import SingleAgentTicTacToeEnv
+from single_agent_ttt_env import SingleAgentTicTacToeEnv
 from counter import CounterEnv
 from mnist_env import MNISTEnv
-from rlpy.gradnet.AC import Brain, RNNBrain
-from rlpy import Agent, Trainer
+from rlpy.gradnet.AC import Brain, RNNBrain, BrainContinuous
+from rlpy import Agent, Trainer, Callback
 from util import Monitor
 import numpy as np
 import sys, getopt, math
@@ -34,6 +39,29 @@ class MovingAverage(object):
         return self.Value
 
 EnvParams = {
+    "clusters":    {
+        "gamma":    0.5,
+        "target":   10000.0,
+        "max_steps_per_episode":    300,
+        "beta":     None,
+        "entropy_weight":   0.1,
+        "cutoff":   5,
+        "hidden":   300,
+        "episodes_between_tests":   5,
+        "test_episodes":        1,
+    },
+    "clusters_k":    {
+        "critic_weight":    1.0,
+        "gamma":    0.99,
+        "target":   1000.0,
+        "max_steps_per_episode":    300,
+        "beta":     None,
+        "entropy_weight":   0.01,
+        "cutoff":   10,
+        "hidden":   200,
+        "episodes_between_tests":   10,
+        "test_episodes":        1,
+    },
     "mnist":    {
         "gamma":    0.0,
         "target":   95,
@@ -66,6 +94,17 @@ EnvParams = {
         #"critic_weight":    1.0,
         #"actor_weight":    0.5
     },
+    "LunarLander-v2":  {
+        "target":           195.0,
+        "max_steps_per_episode":    200,
+        "learning_rate":    0.01,
+        "critic_weight":    1.0,
+        "entropy_weight":   0.01,
+        "actor_weight":     1.0,
+        "gamma":            0.95,
+        "cutoff":           10,
+        "beta":             None
+    },
     "CartPole-v0":  {
         "target":   195.0,
         "max_steps_per_episode":    200,
@@ -75,7 +114,6 @@ EnvParams = {
         "actor_weight":    1.0,
     },
     "cartpole":  {
-        "rnn":  False,
         "gamma":    0.9,
         "target":   -0.01,
         "max_steps_per_episode":    200,
@@ -85,8 +123,19 @@ EnvParams = {
         "actor_weight":    1.0,
         "cutoff":           1
     },
+    "cartpole_cont":  {
+        "brain":  BrainContinuous,
+        "gamma":    0.9,
+        "target":   -0.01,
+        "max_steps_per_episode":    200,
+        "learning_rate":    0.01,
+        "critic_weight":    0.5,
+        "entropy_weight":   0.0,
+        "actor_weight":    1.0,
+        "cutoff":           1
+    },
     "sequence":  {
-        "rnn":  True,
+        "brain":  RNNBrain,
         "gamma":    0.9,
         "target":   100,
         "max_steps_per_episode":    50,
@@ -94,14 +143,37 @@ EnvParams = {
         "entropy_weight":   0.01,
         "cutoff":           10
     },
-    "blackjack":  {
-        "rnn":  False,
+    "game11":  {
+        "rnn":  True,
         "gamma":    1.0,
-        "target":   10.0,
+        "target":   11.0,
         "max_steps_per_episode":    200,
         "learning_rate":    0.01,
-        "critic_weight":    0.5,
-        "entropy_weight":   0.1,
+        "critic_weight":    1.0,
+        "entropy_weight":   0.01,
+        "actor_weight":     1.0,
+        "cutoff":           100
+    },
+    "blackjack":  {
+        "rnn":  True,
+        "gamma":    1.0,
+        "target":   21.0,
+        "max_steps_per_episode":    200,
+        "learning_rate":    0.01,
+        "critic_weight":    1.0,
+        "entropy_weight":   0.001,
+        "actor_weight":     1.0,
+        "cutoff":           100,
+        "hidden":           200
+    },
+    "game21":  {
+        "rnn":  True,
+        "gamma":    1.0,
+        "target":   21.0,
+        "max_steps_per_episode":    200,
+        "learning_rate":    0.01,
+        "critic_weight":    1.0,
+        "entropy_weight":   0.01,
         "actor_weight":     1.0,
         "cutoff":           100
     },
@@ -128,6 +200,8 @@ EnvParams = {
         "cutoff":           100
     },
     "*":    {       # default parameters
+        "brain":    Brain,
+        "continuous":   False,
         "hidden":   200,
         "rnn":  False,
         "gamma":    0.99,
@@ -141,7 +215,9 @@ EnvParams = {
         "invalid_action_weight":    5.0,
         "max_steps_per_episode":    100,
         "max_episodes":     100000,
-        "steps_per_batch":  100
+        "steps_per_batch":  20,
+        "episodes_between_tests":   1000,
+        "test_episodes":        10
     }
 }
 
@@ -172,11 +248,17 @@ max_steps_per_episode = params["max_steps_per_episode"]
 port = 8989
 hidden = params["hidden"]
 with_rnn = params["rnn"]
+continuous = params["continuous"]
 beta = params["beta"]
 epsilon = params["epsilon"]
 target = params.get("target")
 max_episodes = params["max_episodes"]
 steps_per_batch = params["steps_per_batch"]
+
+episodes_between_tests = params["episodes_between_tests"]
+test_episodes = params["test_episodes"]
+
+brain_class = params["brain"]
 
 entropy_weight = params["entropy_weight"]
 critic_weight = params["critic_weight"]
@@ -191,6 +273,8 @@ elif env_name == "ttt":
     env = SingleAgentTicTacToeEnv()
 elif env_name == "cartpole":
     env = CartPoleEnv()
+elif env_name == "cartpole_cont":
+    env = CartPoleContinuousEnv()
 elif env_name == "blackjack":
     env = SimpleBlackJackEnv()
 elif env_name == "ascention":
@@ -201,6 +285,14 @@ elif env_name == "sequence":
     env = SequenceEnv(10, 5)
 elif env_name == "mnist":
     env = MNISTEnv()
+elif env_name == "game11":
+    env = Game11Env()
+elif env_name == "game21":
+    env = Game21Env()
+elif env_name == "clusters":
+    env = ClusterEnv(7,7)
+elif env_name == "clusters_k":
+    env = ClusterKEnv(4, 4)
 else:
     import gym
     env = gym.make(env_name)
@@ -212,6 +304,7 @@ optimizer = get_optimizer("adagrad", learning_rate=learning_rate, gamma=1.0)   #
 monitor = Monitor("monitor.csv", 
     title = "Actor-Criric Reinforced Learning",
     metadata = dict(
+        rnn=with_rnn,
         gamma=gamma,
         comment = comment,
         environment = env_name,
@@ -230,9 +323,13 @@ monitor = Monitor("monitor.csv",
     plots=[
         [
             {
-                "label":        "running average training score",
+                "label":        "running average training reward",
                 "line_width":   2.0
-            }            
+            },
+            {
+                "label":        "training eposode reward",
+                "line_width":   1.0
+            }
         ],
         [
             {   "label":    "actor loss"   }
@@ -255,9 +352,10 @@ monitor = Monitor("monitor.csv",
 
 monitor.start_server(port)
 
-class SaveCallback(object):
+class SaveCallback(Callback):
     
     def __init__(self, save_to):
+        Callback.__init__(self)
         self.BestReward = None
         self.SaveTo = save_to
 
@@ -270,13 +368,14 @@ class SaveCallback(object):
             print("Model weights saved to", self.SaveTo, "with best running reward", self.BestReward)
             self.BestReward = running_reward
 
-class UpdateMonitorCallback(object):
+class UpdateMonitorCallback(Callback):
     
-    PlayInterval = 200
+    TestInterval = 1000
     ReportInterval = 10
     
     def __init__(self, monitor):
-        self.NextPlay = self.PlayInterval
+        Callback.__init__(self)
+        self.NextTest = self.TestInterval
         self.NextReport = self.ReportInterval
         self.Episodes = 0
         self.Steps = 0
@@ -286,14 +385,17 @@ class UpdateMonitorCallback(object):
         self.AvgReturnMA = MovingAverage()
         self.AvgRewardMA = MovingAverage()
         self.AvgAdvantageMA = MovingAverage()
+        self.AvgTestRewardMA = MovingAverage()
 
     def train_batch_end(self, brain, agent, batch_episodes, steps, stats):
         self.Episodes += batch_episodes
         self.Steps += steps
         running_reward = agent.RunningReward
         entropy = stats["entropy"]
-        self.Monitor.add(self.Steps, {
-                "running average training score":   running_reward,
+            
+        mon_data = {
+                "running average training reward":   running_reward,
+                "training eposode reward":   agent.EpisodeReward,
                 "critic loss":  stats["critic_loss"],
                 "actor loss":  stats["actor_loss"],
                 "entropy":  entropy,
@@ -303,14 +405,18 @@ class UpdateMonitorCallback(object):
                 "average return":    self.AvgReturnMA(stats["average_return"]),
                 "average reward":    self.AvgRewardMA(stats["average_reward"])
                 #"average advantage":    self.AvgAdvantageMA(stats["average_advantage"])
-            })
+            }        
+            
+        self.Monitor.add(self.Steps, mon_data)
+        
 
-class Callback(object):
+class PrintCallback(Callback):
     
     PlayInterval = 1000
     ReportInterval = 100
     
     def __init__(self):
+        Callback.__init__(self)
         self.NextPlay = self.PlayInterval
         self.NextReport = self.ReportInterval
         self.Episodes = 0
@@ -329,15 +435,25 @@ class Callback(object):
             )
             #print("   rms(grads):", [math.sqrt(g2) for g2 in stats["average_grad_squared"]])
             self.NextReport += self.ReportInterval
-        if self.Episodes >= self.NextPlay:
-            for _ in range(3):
-                data = agent.play_episode(env, max_steps=max_steps_per_episode, render=True, training=False)
-                test_reward = agent.EpisodeReward
-                print("test reward:", test_reward)
-            self.NextPlay += self.PlayInterval
-
-num_inputs = env.observation_space.shape[0]
-num_actions = env.action_space.n
+            
+class TestCallback(Callback):
+    
+    def __init__(self, monitor=None, test_interval = 1000, test_episodes = 10, render=True):
+        Callback.__init__(self, fire_interval = test_interval)
+        self.TestEpisodes = test_episodes
+        self.Render = render
+        self.Monitor = monitor
+        
+    def train_batch_end(self, brain, agent, batch_episodes, total_steps, stats):
+        sum_reward = 0
+        for _ in range(self.TestEpisodes):
+            agent.play_episode(env, max_steps=max_steps_per_episode, render=self.Render, training=False)
+            test_reward = agent.EpisodeReward
+            sum_reward += test_reward
+            print("test reward:", test_reward)
+        avg_test_reward = sum_reward/self.TestEpisodes
+        print("Average test reward:", type(avg_test_reward), avg_test_reward)
+    
 
 model = None
 if hasattr(env, "create_model"):
@@ -346,9 +462,7 @@ if hasattr(env, "create_model"):
 
 print("optimizer:", optimizer)
 
-brain_class = RNNBrain if with_rnn else Brain
-
-brain = brain_class((num_inputs,), num_actions, model=model,
+brain = brain_class(env.observation_space.shape, env.action_space.n, model=model,
     cutoff=cutoff, beta=beta, gamma=gamma,
     hidden=hidden,
     optimizer = optimizer,
@@ -362,16 +476,21 @@ if load_from:
     brain.load(load_from)
     print("Model weights loaded from", load_from)
 
-agent = Agent(brain, num_actions)
-cb = Callback()
+agent = Agent(brain)
+cb = PrintCallback()
 mcb = UpdateMonitorCallback(monitor)
+test_cb = TestCallback(monitor, test_interval=episodes_between_tests, test_episodes=test_episodes)
 save_cb = SaveCallback(save_to)
+
 trainer = Trainer(agent, replay_ratio=0.1)
 
-trainer.train(env, target, max_episodes=max_episodes, max_steps_per_episode=max_steps_per_episode, 
-    steps_per_batch=steps_per_batch, callbacks=[cb, save_cb, mcb])
+episodes, running_reward, rewards_history = trainer.train(env, target, 
+    min_episodes=100, max_episodes=max_episodes, max_steps_per_episode=max_steps_per_episode, 
+    steps_per_batch=steps_per_batch, callbacks=[cb, save_cb, mcb, test_cb])
 
 print("--- training ended ---")
+print("  episodes:      ", episodes)
+print("  running reward:", running_reward)
 
 
 

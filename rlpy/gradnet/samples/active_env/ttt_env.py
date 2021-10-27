@@ -3,6 +3,8 @@
 #
 
 import numpy as np
+from rlpy import ActiveEnvironment
+from gym import spaces
 
 WinMasks = [
     [
@@ -51,16 +53,23 @@ WinMasks = [
 
 WinMasks = np.array(WinMasks)
 
-class TicTacToeEnv(object):
+class TicTacToeEnv(ActiveEnvironment):
     
     NActions = 9
     ObservationShape = (9,)
+    NState = 9
+    
+    Symbols = "XO"
     
     def __init__(self):
+        ActiveEnvironment.__init__(self, name="Tic-Tac-Toe", 
+                action_space=spaces.Discrete(self.NActions), 
+                observation_space=spaces.Box(-np.ones((self.NState,)), np.ones((self.NState,)), dtype=np.float32))
         self.Board = np.zeros((3,3))
         self.Agents = []
         
     def reset(self, agents, training=True):
+        self.Training = training
         self.Board[...] = 0.0
         self.BoardHistory = []
         self.Agents = agents
@@ -70,12 +79,14 @@ class TicTacToeEnv(object):
             a.reset(training=training)
         assert len(agents) == 2
         self.FirstMove = True
+        self.Done = False
+        self.Win = None
         
     def observation(self, iagent):
         color = iagent*2 - 1     # +1 or -1
         return (self.Board.reshape((-1,)) * color).copy()
 
-    def turn(self, training):
+    def turn(self):
         win = False
         draw = False
         side = self.Side
@@ -86,11 +97,12 @@ class TicTacToeEnv(object):
         
         if not np.any(available):
             # draw
-            self.Agents[side].done(0.0, self.observation(side))
-            self.Agents[other_side].done(0.0, self.observation(other_side))
+            self.Agents[side].done(self.observation(side))
+            self.Agents[other_side].done(self.observation(other_side))
+            self.Done = True
             return True
         
-        action = self.Agents[side].action(0.0, obs, available, training=training)
+        action = self.Agents[side].action(obs, available)
 
         x = action//3
         y = action%3
@@ -100,31 +112,17 @@ class TicTacToeEnv(object):
     
         for win_mask in WinMasks:
             masked = self.Board*color*win_mask
-            if np.sum(masked) == 3:
-                self.Agents[other_side].done(-1.0, self.observation(other_side))
-                self.Agents[side].done(1.0, self.observation(side))
+            if np.sum(masked) == np.sum(win_mask):
+                self.Agents[other_side].done(self.observation(other_side), -1.0)
+                self.Agents[side].done(self.observation(side), 1.0)
+                self.Done = True
+                self.Win = side
                 return True
             
-        self.Side = 1-side
+        self.Side = other_side
         self.FirstMove = False
         return False
             
-    def run(self, agents, callbacks=[], training=True):
-
-        if not isinstance(callbacks, list):
-            callbacks = [callbacks]
-            
-        self.reset(agents)
-
-        while not self.turn(training):
-            for cb in callbacks:
-                if hasattr(cb, "end_turn"):
-                    cb.end_turn(self, agents, {})
-
-        for cb in callbacks:
-            if hasattr(cb, "end_episode"):
-                cb.end_episode(self, agents, {})
-                
     def show_history(self, history=None):
         if history is None: history = self.BoardHistory
         sep = "+---"*len(history) + "+"
@@ -135,8 +133,16 @@ class TicTacToeEnv(object):
                 row = "".join(".ox"[int(c)] for c in b[irow])
                 line += row + "|"
             lines.append(line)
-        lines.append(sep)
+        outcome = "draw"
+        if self.Win is not None:
+            outcome = self.Symbols[self.Win] + " won"
+        lines.append(sep+" "+outcome)
         return "\n".join(lines)
+        
+    def render(self):
+        if self.Done:
+            print(self.show_history())
+        
         
 if __name__ == "__main__":
     

@@ -145,6 +145,8 @@ class Frame(object):
     def remove_all(self):
         self.NamedGeoms = {}
         self.UnnamedGeoms = []
+        
+    clear = remove_all
 
     def remove(self, label):
         if label in self.NamedGeoms:
