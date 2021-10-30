@@ -54,15 +54,12 @@ def entropy_loss(_, probs, data):
         k = abs(logn-1.0)/n
         return values/logn, grads*k
 
-def actor_loss(_, probs, values, data):
+def actor_loss_single_action(_, probs, values, returns, actions):
         probs_shape = probs.shape
         mb = probs_shape[0]
         na = probs_shape[-1]
         values_shape = values.shape
         
-        returns = data["returns"]
-        actions = data["actions"]
-
         probs = probs.reshape((-1, probs_shape[-1]))
         values = values.reshape((-1,))
         actions = actions.reshape((-1,))
@@ -83,6 +80,20 @@ def actor_loss(_, probs, values, data):
         
         losses = -advantages*np.log(np.clip(action_probs, 1.e-5, None)).reshape(values_shape)          # not really loss values
         return losses, [grads, None]
+
+
+def combined_actor_loss(_, values, *params):
+    probs_inputs, data = params[:-1], params[-1]
+    losses = np.zeros(values.shape)
+    all_grads = [None]     # None for grads dL/dvalues
+    actions = np.array(data["actions"])          
+    returns = np.array(data["returns"])
+    for i, probs in enumerate(probs_inputs):
+        l, (grads, _) = actor_loss_single_action(_, probs, values, returns, actions[:,i])
+        losses += l
+        prob_grads.append(grads)
+    return losses, all_grads
+    
 
 def invalid_actions_loss(_, probs, data):
     valid_mask=data.get("valid_actions")
@@ -118,7 +129,7 @@ def cont_entropy_loss(_, sigmas, data):
 
 def cont_actor_loss(_, means, sigmas, values, data):        
         sigmas = np.clip(sigmas, 1e-3, None)
-        controls = data["actions"]
+        controls = data["controls"]
         logprobs = -math.log(2*math.pi)/2 - np.log(sigmas) - ((controls-means)/sigmas)**2/2
         returns = data["returns"][:,None]
         #print("actor_loss: logprobs:", logprobs.shape)
@@ -144,9 +155,7 @@ class Brain(object):
     #       means                   [mb, ncontrols] control means, dummy but present if NControls == 0
     #       sigmas                  [mb, ncontrols] control sigmas, dummy but present if NControls == 0
     # 
-    
-    
-    def __init__(self, observation_shapes, num_actions=0, num_controls=0, model=None, recurrent=False,
+    def __init__(self, observation_spec, action_spec, model=None, recurrent=False,
             optimizer=None, hidden=128, gamma=0.99, 
             with_rnn = False,
             learning_rate = 0.001,       # learning rate for the common part and the Actor
@@ -158,16 +167,53 @@ class Brain(object):
                                         # otherwise beta is used
         ):
         
-        if isinstance(observation_shapes, int):
-            observation_shapes = [(observation_shapes,)]
-        elif isinstance(observation_shapes, tuple):
-            observation_shapes = [observation_shapes]
-        elif not isinstance(observation_shapes, list):
-            raise ValueError("Unsupported vaue type for observation_shapes: %s" % (type(observation_shapes),))
+        #
+        # observation space:
+        #   int             - 1-dim array
+        #   tuple of ints   - n-dim array
+        #   list of tuples of ints  - multiple n-dim arrays
+        #
         
-        self.ObservationShapes = observation_shapes
-        self.NActions = num_actions      
-        self.NControls = num_controls      
+        self.ObservationShapes = None
+
+        if isinstance(observation_spec, int):
+            self.ObservationShapes = [(observation_spec,)]
+        elif isinstance(observation_spec, tuple):
+            if all(isinstance(x, int) for x in observation_spec):
+                self.ObservationShapes = [observation_spec]
+        elif isinstance(observation_spec, list):
+            for tup in observation_spec:
+                if not isinstance(tup, tuple) or not all(isinstance(x, int) for x in tup):
+                    break
+            else:
+                self.ObservationShapes = observation_spec
+        if self.ObservationShapes is None:
+            raise ValueError("Unsupported observation space specification: %s" % (observation_spec,))
+            
+        #
+        # action space:
+        #   int                     - single discrete action
+        #   [ints]                  - discrete action dimensions
+        #   tuple([ints], n:int)    - discrete actions (possibly 0)+ n continuous actions
+        #   
+        
+        self.DiscreteDims = None
+        self.NControls = 0
+
+        if isinstance(action_spec, int):
+            self.DiscreteDims = [action_spec]
+        elif isinstance(action_spec, list):
+            if all(isinstance(x, int) for x in action_spec):
+                self.DiscreteDims = action_spec
+        elif isinstance(action_spec, tuple):
+            if len(action_spec) == 2 \
+                    and isinstance(action_spec[0], list) and all(isinstance(x, int) for x in action_spec[0]) \
+                    and isinstance(action_spec[1], int):
+                self.DiscreteDims, self.NControls = action_spec
+
+        if not self.DiscreteDims and not self.NControls:
+            raise ValueError("Unsupported vaue type for action specification: %s" % (action_spec,))
+        
         self.Recurrent = recurrent
             
         self.Optimizer = optimizer or get_optimizer("adagrad", learning_rate=learning_rate) 
@@ -181,14 +227,8 @@ class Brain(object):
         self.InvalidActionWeight = invalid_action_weight
         self.CriticWeight = critic_weight
         
-        # ActionVectors[action] = [0,0,0,....,1,...] for actions and [all zeros] for action=-1
-        self.ActionVectors = np.concatenate(
-            [np.eye(self.NActions), np.zeros((1,self.NActions))],
-            axis = 0
-        )
-
         if model is None:   
-            model = self.default_model(self.ObservationShapes, self.NActions, self.NControls, hidden) if not with_rnn \
+            model = self.default_model(self.ObservationShapes, self.DiscreteDims, self.NControls, hidden) if not with_rnn \
                     else self.default_rnn_model(self.ObservationShapes, self.NActions, hidden)
                     
         model = self.add_losses(model, critic_weight=critic_weight, actor_weight=actor_weight, entropy_weight=entropy_weight, 
@@ -244,7 +284,7 @@ class Brain(object):
         self.Model.update_weights(source, alpha)
         return old
                     
-    def default_model(self, input_shapes, num_actions, num_controls, hidden):
+    def default_model(self, input_shapes, discrete_dims, num_controls, hidden):
 
         inputs = [Input(input_shape, name=f"input_{i}") for i, input_shape in enumerate(input_shapes)]
 
@@ -255,55 +295,52 @@ class Brain(object):
             inp = Concatenate()(*flattened)
 
         common1 = Dense(hidden, activation="relu", name="common1")(inp)
-        common = Dense(max(hidden//2, num_actions*5), activation="relu", name="common")(common1)
+        common = Dense(hidden//2, activation="relu", name="common")(common1)
 
         critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
         value = Dense(1, name="critic")(critic1)
+        
+        prob_layers = []
+        means = sigmas = None
+        
+        out_layers = [value]
+        
+        for i, num_actions in enumerate(discrete_dims):
+            a = Dense(max(hidden//5, num_actions*5), activation="relu", name=f"action_hidden_{i}")(common)
+            probs = Dense(num_actions, name=f"action_{i}", activation="softmax")(a)
+            prob_layers.append(probs)
+            out_layers.append(probs)
 
-        if num_actions > 0:
-            action1 = Dense(max(hidden//5, num_actions*5), activation="relu", name="action1")(common)
-            probs = Dense(num_actions, name="action", activation="softmax")(action1)
-        else:
-            probs = Constant()
-            
         if num_controls > 0:
+            a = Dense(max(hidden//5, num_controls*10), activation="relu", name="controls_hidden")(common)
             means = Dense(num_controls, activation="linear", name="means")(common)
-            sigmas = Dense(num_controls, activation="linear", name="sigmas")(common)
-        else:
-            means = sigmas = Constant()
+            sigmas = Dense(num_controls, activation="softplus", name="sigmas")(common)
+            out_layers.append(means)
+            out_layers.append(sigmas)
             
-        model = Model(inputs, [value, probs, means, sigmas])
+        model = Model(inputs, out_layers)
         
         model["value"] = value
-        model["probs"] = probs
-        model["means"] = value
-        model["sigmas"] = probs
+        model["prob_layers"] = prob_layers
+        model["means"] = means
+        model["sigmas"] = sigmas
         
         return model
 
     def add_losses(self, model, critic_weight=1.0, actor_weight=1.0, entropy_weight=0.01, invalid_action_weight=10.0, **unused):
 
         model.add_loss(Loss(critic_loss, model["value"]),                   critic_weight, name="critic_loss")
-            
-        if self.NActions > 0:
+        prob_layers = model["prob_layers"]
+        if prob_layers:
             model   \
-            .add_loss(Loss(actor_loss, model["probs"], model["value"]),    actor_weight, name="actor_loss")     \
-            .add_loss(Loss(entropy_loss, model["probs"]),                  entropy_weight, name="entropy_loss") \
-            .add_loss(Loss(invalid_actions_loss, model["probs"]),          invalid_action_weight, name="invalid_action_loss")
-        else:
-            model   \
-            .add_loss(Loss("zero", model["value"]),  actor_weight, name="actor_loss")     \
-            .add_loss(Loss("zero", model["value"]),  entropy_weight, name="entropy_loss") \
-            .add_loss(Loss("zero", model["value"]),  invalid_action_weight, name="invalid_action_loss")
-            
-        if self.NControls > 0:
+            .add_loss(Loss(combined_actor_loss, model["value"], *prob_layers),    actor_weight, name=f"actor_loss")
+            #.add_loss(Loss(combined_entropy_loss, *prob_layers),                  entropy_weight, name=f"entropy_loss") \
+            #.add_loss(Loss(invalid_actions_loss, *prob_layers),          invalid_action_weight, name=f"invalid_action_loss")    \
+        
+        if self.NControls:
             model   \
             .add_loss(Loss(cont_actor_loss,   model["means"], model["sigmas"], model["value"]),    actor_weight, name="cont_actor_loss")     \
-            .add_loss(Loss(cont_entropy_loss, model["sigmas"]),                  entropy_weight, name="cont_entropy_loss")
-        else:
-            model   \
-            .add_loss(Loss("zero", model["Value"]),    actor_weight, name="cont_actor_loss")     \
-            .add_loss(Loss("zero", model["value"]),                  entropy_weight, name="cont_entropy_loss")
+            #.add_loss(Loss(cont_entropy_loss, model["sigmas"]),                  entropy_weight, name="cont_entropy_loss")
 
         return model
         
@@ -423,8 +460,17 @@ class Brain(object):
         return probs
         
     def add_losses_from_episode(self, h):
+        #
+        # actions is list of:
+        #   ints            - single action environments
+        #   [int,...]       - multiple discrete actions environments
+        #   ([ints], [float])   - multi-action, multi-control environments
+        #
+        # observations is list of lists:
+        #   [ndarray, ...]
+        #
 
-        rewards = h["rewards"]
+        rewards = h["rewards"],
         observations = h["observations"]
         actions = h["actions"]
         valids = h["valid_actions"]
@@ -440,11 +486,13 @@ class Brain(object):
         self.Model.reset_state()
         prev_actions = np.roll(actions, 1)
         prev_actions[0] = -1
-        probs, values = self.evaluate_many(prev_actions, xcolumns)
-
+        values, probs, means, sigmas = self.evaluate_batch(xcolumns)
         valid_probs = self.valid_probs(probs, valids)
         returns = self.calculate_future_returns(rewards, valid_probs, values)
         h["returns"] = returns
+        data = {
+            "returns":  returns,
+        }
 
         loss_values = self.Model.backprop(y_=returns[:,None], data=h)
         if False:
@@ -535,86 +583,75 @@ class Brain(object):
             
         return total_steps, stats
         
-    def evaluate_step(self, prev_action, prev_controls, state, reset=False):
-        if not isinstance(state, list):
-            state = [state]
-        if prev_controls is None and self.NControls:
-            prev_controls = np.zeros((self.NControls,))
-        # add mb dimension and run as minibatch
-        values, probs, means, sigmas = self.evaluate_batch(
-            self.ActionVectors[prev_action][None,...], 
-            prev_controls[None,...] if prev_controls is not None else None, 
-            [s[None,...] for s in state]
-        )
-        # remove mb dimension
-        return values[0], probs[0], means[0], sigmas[0]
-        
-    def policy(self, prev_action, state, training, valid_actions):
-        # prev_action here is a tuple (prev_discreet_action, [prev_controls]), or None if this is first step in the episode
-        #
-        # returns tuple:
-        # (discreete action or None, [controls])
-        #
+    def policy(self, action_probs, means, sigmas, valid_masks, training):
+        actions = controls = None
+        if action_probs:
+            actions = []
+            if valid_masks is None:
+                valid_masks = [None]*len(action_probs)
+            for probs, valids in zip(action_probs, valid_masks):
+                probs = np.squeeze(probs)
+                if not training:
+                    # make it a bit more greedy
+                    probs = probs**2
+                    probs = probs/np.sum(probs)
 
-        if prev_action == None:
-            prev_discreet_action = prev_controls = None
-        else:
-            prev_discreet_action, prev_controls = prev_action
-        
-        value, action_probs, means, sigmas = self.evaluate_single(prev_discreet_action, prev_controls, state)
-        
-        action = -1
-        controls = None
-        
-        if len(action_probs):
-            probs = np.squeeze(probs)
-            if not training:
-                # make it a bit more greedy
-                probs = probs**2
-                probs = probs/np.sum(probs)
+                if valids is not None:
+                    probs = self.valid_probs(probs, valids)
 
-            if valid_actions is not None:
-                probs = self.valid_probs(probs, valid_actions)
-
-            action = np.random.choice(self.NActions, p=probs)
-        
+                action = np.random.choice(len(probs), p=probs)
+                actions.append(action)
+            if len(actions) == 1:
+                actions = actions[0]
         if len(means):
             assert len(means) == len(sigmas)
             controls = np.random.normal(means, sigmas)
+            if len(controls) == 1:
+                controls = controls[0]        
             
-        return action, controls
-        
-    def evaluate_sequence(self, prev_actions, prev_controls, states, reset=False):
-        #
-        # inputs: prev_action: [t]                  -1 if no previous action
-        #         prev_controls: [t, ncontrols]     
-        #         state: list of [t, ...]
-        #
-        if not isinstance(state, list):
-            state = [state]
-            
-        return self.evaluate_batch(
-            prev_actions, 
-            prev_controls, 
-            state,
-            reset=reset
+        if actions is None:
+            return controls
+        elif controls is None:
+            return actions
+        else:
+            return actions, controls
+
+    def action(self, observation, valid_masks, training=True):
+        if not isinstance(observation, list):
+            observation = [observation]
+        values, action_probs, means, sigmas = self.evaluate_batch(
+            [s[None,...] for s in observation]
         )
-        
-    def evaluate_batch(self, prev_actions, prev_controls, states, reset=False):
-        if not isinstance(states, list):
-            states = [states]
-        mbsize = len(states[0])
-        inputs = []
-        if self.NActions:
-            inputs.append(self.ActionVectors[prev_actions])
+        if self.DiscreteDims:
+            action_probs = [a[0] for a in action_probs]
         if self.NControls:
-            inputs.append(prev_controls)
-        inputs += states
+            means = means[0]
+            sigmas = sigmas[0]
+            
+        value = values[0]
+
+        print("Brain.action: value, action_probs, means, sigmas = ", value, action_probs, means, sigmas)
+        guides = (action_probs, means, sigmas)
+        
+        return value, guides, self.policy(action_probs, means, sigmas, valid_masks, training)
+        
+    def evaluate_batch(self, observations, reset=False):
+        if not isinstance(observations, list):
+            observations = [observations]
+        mbsize = len(observations[0])
         if reset:
             self.Model.reset_states()
-        values, probs, means, sigmas = self.Model.compute(inputs)       
-        # remove minibatch dimension 
-        return values[:,0], probs, means, sigmas        # convert values from [mb,1] to [mb]
+        outputs = self.Model.compute(observations)
+        means = sigmas = action_probs = None
+        values, outputs = outputs[0], outputs[1:]
+        if self.DiscreteDims:
+            action_probs = outputs[:len(self.DiscreteDims)]
+        if self.NControls:
+            means, sigmas = outputs[-2:]
+        
+        return values[:,0], action_probs, means, sigmas        # convert values from [mb,1] to [mb]
+        
+    evaluate_sequence = evaluate_batch
         
 class RNNBrain(Brain):
     #
@@ -669,12 +706,15 @@ class RNNBrain(Brain):
         #print("RNNBrain.model: evaluate_single: probs, values:", probs[0], values[0])
         return probs[0], values[0]
 
-    def evaluate_many(self, actions, states):
+    def evaluate_many(self, states):
         if not isinstance(states, list):
             states = [states]
-        inputs = [self.ActionVectors[actions]] + states        
+        inputs = states        
         inputs = [s[None, ...] for s in inputs]        # add minibatch dimension
         #print("RNNBrain.model: evaluate_many: states:", states)
+        outputs = self.Model.compute(inputs)
+        values = outputs[0]
+        probs = means = sigmas = None
         probs, values = self.Model.compute(inputs)          
         #for l in self.Model.links():
         #    print(l,":",l.Layer, ": Y=", None if l.Y is None else l.Y.shape)

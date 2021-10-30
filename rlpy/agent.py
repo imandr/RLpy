@@ -24,7 +24,9 @@ class Agent(object):
         #controls_history = []
         observation_history = []
         valids_history = []
+        values_history = []
         meta_history = []
+        probs_history = []
         
 
         if False:
@@ -60,31 +62,36 @@ class Agent(object):
             #print("calculating probs...")
             if not isinstance(state, list):
                 state = [state]                 # always a list of np arrays
+
+            observation_history.append(state)
                 
             #print("Agent.play_episode: state:", state)
-            value, probs = self.Brain.evaluate_step(prev_action, state)
             valid_actions = meta.get("valid_actions")       # None if not there
             #action, controls = self.Brain.policy(probs, means, sigmas, training, valid_actions)
-            action = self.Brain.policy(probs, training, valid_actions)
+
+            if valid_actions is not None:
+                # assume it's consistent through the episode
+                valids_history.append(valid_actions)
+
+            value, probs, action = self.Brain.action(state, valid_actions, training)
+            
+            # probs is a structure describing the probabilities for various actions here 
+            # action can be:
+            # int - single discrete action
+            # float - single control
+            # ndarray of ints - multiple discrete actions
+            # ndarray of floats - multiple controls
+            # tuple (int or ndarray of ints, float or ndattay of floats)
+            
+            probs_history.append(probs)
+            action_history.append(action)
+            values_history.append(value)
+
             new_state, reward, done, meta = env.step(action)
             
-            #if controls is None:
-            #    new_state, reward, done, meta = env.step(action)
-            #elif action is None:
-            #    new_state, reward, done, meta = env.step(controls)
-            #else:
-            #    new_state, reward, done, meta = env.step((action, controls))
-                
             if callbacks:
                 callbacks("agent_episode_step", self, action, new_state, reward, done, meta)
 
-            observation_history.append(state)
-            action_history.append(action)
-            #if action is not None:
-            #    action_history.append(action)
-            #if controls is not None:
-            #    controls_history.append(controls)
-            action_probs_history.append(probs)
             meta_history.append(meta)
 
             if False:
@@ -95,10 +102,6 @@ class Agent(object):
             prev_action = action
             #prev_controls = controls
             
-            if valid_actions is not None:
-                # assume it's consistent through the episode
-                valids_history.append(valid_actions)
-
             if render:
                 env.render()
             
@@ -114,12 +117,10 @@ class Agent(object):
             self.RunningReward += self.Alpha*(self.EpisodeReward - self.RunningReward)
         #print("Agent.play_episode: episode reward:", self.EpisodeReward, "  running reward ->", self.RunningReward)
         self.EpisodeHistory = dict(
-            nsteps =  len(action_history),
             rewards = np.array(rewards_history),
             observations = observation_history,
-            actions = np.array(action_history),
-            probs = action_probs_history,
-            episode_reward = self.EpisodeReward,
+            actions = action_history,
+            probs = probs_history,
             valid_actions = np.array(valids_history) if valids_history else None,
             meta = meta_history
         )
@@ -127,7 +128,7 @@ class Agent(object):
         if callbacks:
             callbacks("agent_episode_end", self, self.EpisodeReward, self.EpisodeHistory)
         
-        return self.EpisodeHistory
+        return self.EpisodeReward, self.EpisodeHistory
         
     def episode_history(self):
         return self.EpisodeHistory
