@@ -1,8 +1,5 @@
-#
-# Based on sample code provided with Keras documentation
-#
-
 import random
+from .util import CallbackList
 
 class TrainerBase(object):
     
@@ -11,6 +8,7 @@ class TrainerBase(object):
         self.KeepRatio = keep_ratio
 
     def train_on_buffer(self, buf, brain, episodes_per_batch, steps_per_batch, callbacks):
+        callbacks = CallbackList.convert(callbacks)
         bufsize = len(buf)
         if episodes_per_batch is None and steps_per_batch is None:
             episodes_per_batch = 10
@@ -35,9 +33,7 @@ class TrainerBase(object):
             if done:
                 batch_steps, stats = brain.train_on_multi_episode_history(batch)
                 total_steps += batch_steps
-                for callback in callbacks:
-                    if hasattr(callback, "train_batch_end"):
-                        callback.train_batch_end(brain, self.Agents, len(batch), batch_steps, stats)
+                callbacks("train_batch_end", brain, self.Agents, len(batch), batch_steps, stats)
                 for episode in batch:
                     if random.random() < self.KeepRatio:
                         kept_episodes.append(episode)
@@ -57,34 +53,27 @@ class Trainer(TrainerBase):
         self.KeepRatio = replay_ratio
         self.HistoryBuffer = []
         
-    def callbacks(self, callbacks, method, *params, **args):
-        for callback in callbacks:
-            if hasattr(callback, method):
-                getattr(callback, method)(*params, **args)
-        
-        
-    def train(self, env, target_reward=None, max_episodes=None, max_steps_per_episode=None,
-            episodes_per_batch=None, steps_per_batch=None, callbacks=[]):
+    def train(self, env, target_reward=None, min_episodes=0, max_episodes=None, max_steps_per_episode=None,
+            episodes_per_batch=None, steps_per_batch=None, callbacks=None):
+            
+        callbacks = CallbackList.convert(callbacks)
 
         self.HistoryBuffer = []
         rewards_history = []
 
         episodes = 0
         while max_episodes is None or episodes < max_episodes:
-            self.callbacks(callbacks, "before_train_episode", self.Agent)
-            history = self.Agent.play_episode(env, max_steps_per_episode, training=True)
+            history = self.Agent.play_episode(env, max_steps_per_episode, training=True, callbacks=callbacks)
             episode_reward = self.Agent.EpisodeReward
             running_reward = self.Agent.RunningReward
             self.HistoryBuffer.append(history)
             episodes += 1
             rewards_history.append(episode_reward)
             
-            self.callbacks(callbacks, "train_episode_end", self.Agent, episode_reward, history)
-
             self.HistoryBuffer = self.train_on_buffer(self.HistoryBuffer, self.Agent.Brain, 
                     episodes_per_batch, steps_per_batch, callbacks)   
             
-            if target_reward is not None and running_reward >= target_reward:
+            if episodes > min_episodes and (target_reward is not None and running_reward >= target_reward):
                 break
                 
         return episodes, running_reward, rewards_history

@@ -3,19 +3,27 @@ import numpy as np
 import math, time
 from gym import spaces
 from draw2d import Viewer, Frame, Line, Polygon, Circle, Text
-from AC import ActiveEnvironment
+from rlpy import ActiveEnvironment
 
-FireRange = 0.1
+FireRange = 0.2
 TargetSize = 0.01
 
-class Object(object):
+X0 = 0.0
+X1 = 1.0
+Y0 = 0.0
+Y1 = 1.0
+Margin = 0.1
 
+
+class Tank(object):
+
+    ActionCapacity = 2
     
     def __init__(self):
         self.X = self.Y = None
         self.Angle = None
         self.Reward = 0.0       # accumulated since last action
-        
+
     def random_init(self, x0, x1, y0, y1, margin):
         self.X = margin + random.random()*(x1-x0-margin*2)
         self.Y = margin + random.random()*(y1-y0-margin*2)
@@ -31,22 +39,15 @@ class Object(object):
         delta = distance * math.sin(abs(a-self.Angle))
         return abs(self.Angle - a) < math.pi/4 and delta < TargetSize and distance < FireRange + TargetSize
         
-
-class MultitankEnv(ActiveEnvironment):
+class TankDuelEnv(ActiveEnvironment):
     
     Speed = 0.01
     RotSpeed = math.pi*2/6/math.pi      # ~ 2pi/10
     TimeHorizon = 100
-    BaseReward = 0.0
+    BaseReward = -0.01
     FallReward = -1.0
-    MissReward = -0.02
+    MissReward = -0.1
     HitReward = 10.0
-    
-    X0 = 0.0
-    X1 = 1.0
-    Y0 = 0.0
-    Y1 = 1.0
-    Margin = 0.1
     
     FIRE = 0
     FWD = 1
@@ -54,14 +55,17 @@ class MultitankEnv(ActiveEnvironment):
     LEFT = 3
     RIGHT = 4
     NActions = 5
-
     BCK = 5
 
     NState = 9
-    
+    ObservationShape = (NState,)
+
     AvailableMask = np.ones((NActions,))
 
-    def __init__(self, duel=True, target=True):
+    def __init__(self, duel=True, target=True, compete=True):
+
+        self.Compete = compete
+
         high = np.array([1.0]*self.NState, dtype=np.float32)
         ActiveEnvironment.__init__(self, name="MultiTankEnv", 
                 action_space=spaces.Discrete(self.NActions), observation_space=spaces.Box(-high, high, dtype=np.float32))
@@ -73,9 +77,8 @@ class MultitankEnv(ActiveEnvironment):
         self.EpisodeReward = 0.0
         self.T = self.TimeHorizon
         
-        self.Tanks = [Object() for _ in (0,1)]
-        self.Target = Object()
-        
+        self.Tanks = [Tank() for _ in (0,1)]
+        self.Target = Tank()
         
     def bind_angle(self, a):
         while a < -math.pi:
@@ -96,7 +99,7 @@ class MultitankEnv(ActiveEnvironment):
         bearing = math.atan2(dy, dx)
         obs[3] = math.sqrt(dx*dx + dy*dy)
         obs[4] = bearing
-        obs[5] = other.Angle
+        obs[5] = other.Angle - tank.Angle
         
         dx = self.Target.X - tank.X
         dy = self.Target.Y - tank.Y
@@ -104,25 +107,25 @@ class MultitankEnv(ActiveEnvironment):
         obs[7] = math.atan2(dy, dx)
         
         obs[8] = self.T/self.TimeHorizon
+        
         return obs
         
     def seed(self, x):
         pass
         
     def reset(self, agents, training=True):
-        self.Training = training
         self.Agents = agents
-        [t.random_init(self.X0, self.X1, self.Y0, self.Y1, self.Margin) for t in self.Tanks]
-        self.Target.random_init(self.X0, self.X1, self.Y0, self.Y1, self.Margin)
+        [t.random_init(X0, X1, Y0, Y1, Margin) for t in self.Tanks]
+        self.Target.random_init(X0, X1, Y0, Y1, Margin)
         for t in self.Tanks:    t.Hit = False
         [a.reset(training) for a in agents]
         self.T = self.TimeHorizon
         self.Side = 0
         
-    def turn(self, training):
+    def turn(self):
         done = False
         for side in (0,1):
-            done = self.move_tank(side, self.Training)
+            done = self.move_tank(side)
             if done:
                 break
         else:
@@ -145,8 +148,10 @@ class MultitankEnv(ActiveEnvironment):
         other_agent = self.Agents[other_side]
         obs = self.observation(side)
         #print("side:", side, " tank.Reward since last action:", tank.Reward)
-        action = agent.action(obs, self.AvailableMask)
-        reward = tank.Reward = other_reward_delta = 0.0
+        action = agent.action(obs)
+
+        tank.Reward = reward = self.BaseReward
+        other_reward = 0.0
         
         tank.Fire = False        # for viewing
         done = False
@@ -163,10 +168,10 @@ class MultitankEnv(ActiveEnvironment):
                 )
                 x = tank.X + math.cos(tank.Angle)*d
                 y = tank.Y + math.sin(tank.Angle)*d
-                x1 = max(self.X0, min(self.X1, x))
-                y1 = max(self.Y0, min(self.Y1, y))
+                x1 = max(X0, min(X1, x))
+                y1 = max(Y0, min(Y1, y))
                 if x1 != x or y1 != y:  # bump ?
-                    agent.reward(self.FallReward)
+                    reward = self.FallReward
                     done = True
                 tank.X, tank.Y = x1, y1
                 #self.Reward += 0.001
@@ -175,24 +180,28 @@ class MultitankEnv(ActiveEnvironment):
                 if self.Duel and tank.hit(other):
                     print(f"hit {side} -> {other_side}")
                     other.Hit = True
-                    agent.reward(self.HitReward)
-                    other_agent.reward(-self.HitReward)
+                    reward = self.HitReward
+                    other_reward = -self.HitReward
                     done = True
                 elif self.HitTarget and tank.hit(self.Target):
                     print(f"hit {side} -> target")
-                    done = True
-                    agent.reward(self.HitReward)
-                    other_agent.reward(-self.HitReward)
+                    reward = self.HitReward
                     self.Target.Hit = True
+                    if self.Compete:
+                        other_reward = -self.HitReward
+                    done = True
                 else:
                     #print(f"miss {self.Side}")
-                    agent.reward(self.MissReward)
+                    reward = self.MissReward
             elif action == self.LEFT:
                 tank.Angle += self.RotSpeed
                 tank.Angle = self.bind_angle(tank.Angle)
             elif action == self.RIGHT:
                 tank.Angle -= self.RotSpeed
                 tank.Angle = self.bind_angle(tank.Angle)
+                
+            agent.update(reward=reward)
+            other_agent.update(reward=other_reward)
                 
         return done
            

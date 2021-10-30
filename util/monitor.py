@@ -100,6 +100,7 @@ class Handler(WPHandler):
             "title":        self.App.Monitor.Title,
             "metadata":     self.App.Monitor.Meta
         }
+        #print("Handler.data(): out:", out)
         response = Response(json.dumps(out), headers={
             "Content-Type": "text/json",
             "Access-Control-Allow-Origin": "*"

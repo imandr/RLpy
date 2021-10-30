@@ -118,7 +118,9 @@
                         series_list.forEach( (series, iseries) => {
                             series_options[iseries] = series.options;
                             plot_data.addColumn("number", series.label);
-                            cols.push(columns[series.label]);
+							var col = columns[series.label];
+							if ( col != undefined )
+                            	cols.push(columns[series.label]);
                         });
                         plot_data.addRows(transpose(cols, ));
                         var options = common_options;           // better make a copy ?
