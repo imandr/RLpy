@@ -21,7 +21,8 @@ class TrainerBase(object):
             done = False
             while buf and not done:
                 episode = buf.pop()
-                n = len(episode["actions"])
+                #print("TrainerBase.train_on_buffer: episode:", episode)
+                n = episode["steps"]
                 batch.append(episode)
                 
                 batch_steps += n
@@ -33,6 +34,7 @@ class TrainerBase(object):
             if done:
                 batch_steps, stats = brain.train_on_multi_episode_history(batch)
                 total_steps += batch_steps
+                print("TrainerBase: train batch end")
                 callbacks("train_batch_end", brain, self.Agents, len(batch), batch_steps, stats)
                 for episode in batch:
                     if random.random() < self.KeepRatio:
@@ -63,8 +65,7 @@ class Trainer(TrainerBase):
 
         episodes = 0
         while max_episodes is None or episodes < max_episodes:
-            history = self.Agent.play_episode(env, max_steps_per_episode, training=True, callbacks=callbacks)
-            episode_reward = self.Agent.EpisodeReward
+            episode_reward, history = self.Agent.play_episode(env, max_steps_per_episode, training=True, callbacks=callbacks)
             running_reward = self.Agent.RunningReward
             self.HistoryBuffer.append(history)
             episodes += 1

@@ -85,12 +85,15 @@ class Agent(object):
             # tuple (int or ndarray of ints, float or ndattay of floats)
             
             probs_history.append(probs)
-            actions_history.append(actions)
+            if actions is not None:
+                actions_history.append(actions)
             values_history.append(value)
             probs_history.append(probs)
-            means_history.append(means)
-            sigmas_history.append(sigmas)
-            controls_history.append(controls)
+            if means is not None:
+                means_history.append(means)
+                sigmas_history.append(sigmas)
+            if controls is not None:
+                controls_history.append(controls)
             env_actions_history.append(env_action)
             
             new_state, reward, done, meta = env.step(env_action)
@@ -100,7 +103,7 @@ class Agent(object):
 
             meta_history.append(meta)
 
-            if True:
+            if False:
                 print("state:", state, "  probs:", probs, "  action:", env_action, "  reward:", reward, " new state:", new_state, "  done:", done)
             #print("p:", action, state, reward, done)
             
@@ -122,6 +125,7 @@ class Agent(object):
             self.RunningReward += self.Alpha*(self.EpisodeReward - self.RunningReward)
         #print("Agent.play_episode: episode reward:", self.EpisodeReward, "  running reward ->", self.RunningReward)
         self.EpisodeHistory = dict(
+            steps = steps,
             rewards = np.array(rewards_history),
             observations = observation_history,
             actions = np.array(actions_history, dtype=np.int),

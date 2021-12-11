@@ -58,15 +58,21 @@ def actor_loss_single_action(_, probs, values, returns, actions):
         probs_shape = probs.shape
         mb = probs_shape[0]
         na = probs_shape[-1]
-        values_shape = values.shape
         
         probs = probs.reshape((-1, probs_shape[-1]))
         values = values.reshape((-1,))
         actions = actions.reshape((-1,))
         returns = returns.reshape((-1,))
+
+        values_shape = values.shape
+        
+        print("actor_loss_single_action: values shape: ", values.shape)
+        print("                          returns shape:", returns.shape)
+        print("                          actions shape:", actions.shape)
         
         #print("ActorLoss: probs:",probs.shape)
         #print("          values:", values.shape)
+        print("actor_loss_single_action: actions:", actions)
         action_mask = np.eye(na)[actions]
         action_probs = np.sum(action_mask*probs, axis=-1)
         advantages = returns - values
@@ -79,19 +85,22 @@ def actor_loss_single_action(_, probs, values, returns, actions):
         grads = grads.reshape(probs_shape)
         
         losses = -advantages*np.log(np.clip(action_probs, 1.e-5, None)).reshape(values_shape)          # not really loss values
+        print("actor_loss_single_action: losses:", losses)
         return losses, [grads, None]
 
 
 def combined_actor_loss(_, values, *params):
+    values = values[:,0]
+    print("combined_actor_loss: values.shape:", values.shape)
     probs_inputs, data = params[:-1], params[-1]
     losses = np.zeros(values.shape)
     all_grads = [None]     # None for grads dL/dvalues
-    actions = np.array(data["actions"])          
-    returns = np.array(data["returns"])
+    actions = data["actions"]       
+    returns = data["returns"]
     for i, probs in enumerate(probs_inputs):
         l, (grads, _) = actor_loss_single_action(_, probs, values, returns, actions[:,i])
         losses += l
-        prob_grads.append(grads)
+        all_grads.append(grads)
     return losses, all_grads
     
 
@@ -155,7 +164,7 @@ class Brain(object):
     #       means                   [mb, ncontrols] control means, dummy but present if NControls == 0
     #       sigmas                  [mb, ncontrols] control sigmas, dummy but present if NControls == 0
     # 
-    def __init__(self, observation_spec, action_spec, model=None, recurrent=False,
+    def __init__(self, observation_space, action_space, model=None, recurrent=False,
             optimizer=None, hidden=128, gamma=0.99, 
             with_rnn = False,
             learning_rate = 0.001,       # learning rate for the common part and the Actor
@@ -169,50 +178,74 @@ class Brain(object):
         
         #
         # observation space:
-        #   int             - 1-dim array
-        #   tuple of ints   - n-dim array
-        #   list of tuples of ints  - multiple n-dim arrays
+        #   int
+        #   Box             
+        #   tuple of Box'es   
         #
         
         self.ObservationShapes = None
 
-        if isinstance(observation_spec, int):
-            self.ObservationShapes = [(observation_spec,)]
-        elif isinstance(observation_spec, tuple):
-            if all(isinstance(x, int) for x in observation_spec):
-                self.ObservationShapes = [observation_spec]
-        elif isinstance(observation_spec, list):
-            for tup in observation_spec:
-                if not isinstance(tup, tuple) or not all(isinstance(x, int) for x in tup):
-                    break
-            else:
-                self.ObservationShapes = observation_spec
+        if isinstance(observation_space, int):
+            self.ObservationShapes = [(observation_space,)]
+        elif isinstance(observation_space, spaces.Box):
+            self.ObservationShapes = [observation_space.shape]
+        elif isinstance(observation_space, spaces.Tuple):
+            if all(isinstance(x, spaces.Box) for x in observation_space):
+                self.ObservationShapes = [(x.shape,) for x in observation_space]
         if self.ObservationShapes is None:
             raise ValueError("Unsupported observation space specification: %s" % (observation_spec,))
             
         #
         # action space:
-        #   int                     - single discrete action
-        #   [ints]                  - discrete action dimensions
-        #   tuple([ints], n:int)    - discrete actions (possibly 0)+ n continuous actions
+        #   int or Discrete        - single discrete action
+        #   [ints] or MultiDiscrete   - discrete action dimensions
+        #   Box             - controls
+        #   Tuple(int, Discrete, MultiDiscrete or[ints], Box or int)
+        #   tuple(int, Discrete, MultiDiscrete or[ints], Box or int)
         #   
         
-        self.DiscreteDims = None
-        self.NControls = 0
-
-        if isinstance(action_spec, int):
-            self.DiscreteDims = [action_spec]
-        elif isinstance(action_spec, list):
-            if all(isinstance(x, int) for x in action_spec):
-                self.DiscreteDims = action_spec
-        elif isinstance(action_spec, tuple):
-            if len(action_spec) == 2 \
-                    and isinstance(action_spec[0], list) and all(isinstance(x, int) for x in action_spec[0]) \
-                    and isinstance(action_spec[1], int):
-                self.DiscreteDims, self.NControls = action_spec
-
+        discrete = cont = self.DiscreteDims = None
+        self.NControls = 0        
+        self.ControlBounds = None
+        
+        if isinstance(action_space, (spaces.Discrete, spaces.MultiDiscrete)):
+            discrete = action_space
+        elif isinstance(action_space, spaces.Box):
+            cont = action_space
+        elif isinstance(action_space, (spaces.Tuple, tuple)):
+            discrete, cont = action_space
+        else:
+            raise ValueError("Unsupported vaue type for action specification: %s" % (action_spec,))
+            
+        if discrete is not None:
+            if isinstance(discrete, int):
+                self.DiscreteDims = [discrete]
+            elif isinstance(discrete, list):
+                self.DiscreteDims = discrete
+            elif isinstance(discrete, spaces.Discrete):
+                self.DiscreteDims = [discrete.n]
+            elif isinstance(discrete, spaces.MultiDiscrete):
+                self.DiscreteDims = list(discrete.nvec)
+            else:
+                raise ValueError("Unrecognized discrete actions space:", discrete)
+                
+        if cont is not None:
+            if isinstance(cont, spaces.Box):
+                assert len(cont.shape) == 1
+                self.NControls = cont.shape[0]
+                self.ControlBounds = cont.low, cont.high
+            elif isinstance(cont, int):
+                self.NControls = cont
+            else:
+                raise ValueError("Unrecognized continuous actions space:", cont)
+        
         if not self.DiscreteDims and not self.NControls:
             raise ValueError("Unsupported vaue type for action specification: %s" % (action_spec,))
+            
+        print("Creating brain for:")
+        print("    observation shapes:", self.ObservationShapes)
+        print("    discrete dims:     ", self.DiscreteDims)
+        print("    controls:          ", self.NControls)
         
         self.Recurrent = recurrent
             
@@ -305,7 +338,7 @@ class Brain(object):
         
         out_layers = [value]
         
-        for i, num_actions in enumerate(discrete_dims):
+        for i, num_actions in enumerate(discrete_dims or []):
             a = Dense(max(hidden//5, num_actions*5), activation="relu", name=f"action_hidden_{i}")(common)
             probs = Dense(num_actions, name=f"action_{i}", activation="softmax")(a)
             prob_layers.append(probs)
@@ -470,7 +503,7 @@ class Brain(object):
         #   [ndarray, ...]
         #
 
-        rewards = h["rewards"],
+        rewards = h["rewards"]
         observations = h["observations"]
         actions = h["actions"]
         valids = h["valid_actions"]
@@ -484,8 +517,6 @@ class Brain(object):
         #print("episode observations shape:", observations.shape)
         #print("add_losses: reset_state()")
         self.Model.reset_state()
-        prev_actions = np.roll(actions, 1)
-        prev_actions[0] = -1
         values, probs, means, sigmas = self.evaluate_batch(xcolumns)
         valid_probs = self.valid_probs(probs, valids)
         returns = self.calculate_future_returns(rewards, valid_probs, values)
@@ -494,6 +525,16 @@ class Brain(object):
             "returns":  returns,
         }
 
+        if False:
+            print("--------- Brain.add_losses_from_episode: history:")
+            print("        T:    ", T)
+            print("   valies:    ", values)
+            print("  actions:    ", actions)
+            print("  rewards:    ", rewards)
+            print("  returns:    ", returns)
+            print("   valids:    ", valids)
+
+
         loss_values = self.Model.backprop(y_=returns[:,None], data=h)
         if False:
             print("--------- Brain.add_losses_from_episode: episode:")
@@ -501,8 +542,8 @@ class Brain(object):
             print("  rewards:    ", rewards)
             print("  returns:    ", returns)
             print("   values:    ", values)
-            print("  entropy:    ", loss_values["entropy_loss"])
-            print(" critic loss per step:", loss_values["critic_loss"]/T)
+            #print("  entropy:    ", loss_values["entropy_loss"])
+            #print(" critic loss per step:", loss_values["critic_loss"]/T)
 
         
         #print("add_losses_from_episode: stats.keys:", list(stats.keys()))
@@ -537,13 +578,13 @@ class Brain(object):
         self.Model.reset_losses()
         
         for h in multi_ep_history:
-            if len(h.get("actions")):       # episode was not empty
+            T = h["steps"]
+            if T:       # episode was not empty
                 stats = self.add_losses_from_episode(h)
                 actor_losses += stats["actor_loss"]
                 invalid_action_losses += stats["invalid_action_loss"]
                 critic_losses += stats["critic_loss"]
                 entropy_losses += stats["entropy_loss"]
-                T = len(h["actions"])
                 total_steps += T
         
                 sum_values += stats["sum_values"]
@@ -603,37 +644,45 @@ class Brain(object):
                 actions.append(action)
             if len(actions) == 1:
                 actions = actions[0]
-        if len(means):
+        if means is not None and len(means):
             assert len(means) == len(sigmas)
             controls = np.random.normal(means, sigmas)
-            if len(controls) == 1:
-                controls = controls[0]        
+            if self.ControlBounds:
+                low, high = self.ControlBounds
+                controls = [np.clip(x, l, h) for x, l, h in zip(controls, low, high)]
+                #print("clipped: low/clipped/high:", low, controls, high)
             
-        if actions is None:
-            return controls
-        elif controls is None:
-            return actions
-        else:
-            return actions, controls
+            
+        return actions, controls
 
     def action(self, observation, valid_masks, training=True):
         if not isinstance(observation, list):
             observation = [observation]
+
         values, action_probs, means, sigmas = self.evaluate_batch(
             [s[None,...] for s in observation]
         )
+        
         if self.DiscreteDims:
             action_probs = [a[0] for a in action_probs]
+
         if self.NControls:
             means = means[0]
             sigmas = sigmas[0]
             
         value = values[0]
 
-        print("Brain.action: value, action_probs, means, sigmas = ", value, action_probs, means, sigmas)
-        guides = (action_probs, means, sigmas)
+        #print("Brain.action: value, action_probs, means, sigmas = ", value, action_probs, means, sigmas)
+        actions, controls = self.policy(action_probs, means, sigmas, valid_masks, training)
         
-        return value, guides, self.policy(action_probs, means, sigmas, valid_masks, training)
+        if self.NControls == 0:
+            env_action = actions
+        elif not self.DiscreteDims:
+            env_action = controls
+        else:
+            env_action = (actions, controls)
+        
+        return value, action_probs, means, sigmas, actions, controls, env_action
         
     def evaluate_batch(self, observations, reset=False):
         if not isinstance(observations, list):
@@ -657,8 +706,6 @@ class RNNBrain(Brain):
     #
     # Recurrent Brain model:
     #   inputs: 
-    #       prev_action_vectors:    [mb, t, nactions] - optional, present only if NActions > 0
-    #       prev_controls:          [mb, t, ncontrols] - optional, present only if NControls > 0
     #       state:                  [mb, t, ...]
     #
     #   output:

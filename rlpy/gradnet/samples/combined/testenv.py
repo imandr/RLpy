@@ -2,18 +2,17 @@ import numpy as np
 
 class TestEnv(object):
     
-    W = 3
     NA = 2
     NC = 2
     
-    ObservationSpec = [(W,), (W,)]
+    ObservationSpec = [(2,), (2,)]
     ActionSpec = ([2,2], 2)
     
     def __init__(self):
         self.State = None
         
     def next(self):
-        self.State = [np.random.random((self.W,)), np.random.random((self.W,))]
+        self.State = [np.random.random(shape) for shape in self.ObservationSpec]
                 
     def observation(self):
         return self.State
