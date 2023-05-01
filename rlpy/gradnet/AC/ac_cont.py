@@ -20,17 +20,22 @@ def entropy_loss(_, sigmas, data):
 def actor_loss(_, means, sigmas, values, data):        
         sigmas = np.clip(sigmas, 1e-3, None)
         controls = data["actions"]
+        #print("actor_loss:")
+        #print("            controls:", controls)
+        #print("            sigmas:  ", sigmas)
         logprobs = -math.log(2*math.pi)/2 - np.log(sigmas) - ((controls-means)/sigmas)**2/2
         returns = data["returns"][:,None]
         #print("actor_loss: logprobs:", logprobs.shape)
         #print("            controls:", controls.shape)
         #print("            returns:", data["returns"].shape)
         advantages = returns - values
-        #print("            advantages:", advantages.shape)
+        #print("            advantages:", advantages)
         losses = -advantages * logprobs
         grads_sigmas = -advantages * (((controls-means)/sigmas)**2 - 1)/sigmas
         grads_means = -advantages * (controls-means)/sigmas**2
-        #print("            grads means:", grads_means.shape)
+        #print("                 lossed:", grads_means)
+        #print("            grads means:", grads_means)
+        #print("           grads sigmas:", grads_sigmas)
         return losses, [grads_means, grads_sigmas, None]
     
 def critic_loss(_, values, data):
@@ -47,8 +52,8 @@ class BrainContinuous(Brain):
         self.NControls = ncontrols
         #print("BrainContinuous(): NControls:", self.NControls)
             
-    def create_model(self, input_shapes, num_controls, hidden):
-        model = self.default_model(input_shapes, num_controls, hidden)
+    def create_model(self, input_shape, num_controls, hidden):
+        model = self.default_model(input_shape, num_controls, hidden)
         model   \
             .add_loss(Loss(critic_loss, model["value"]),                   self.CriticWeight, name="critic_loss")  \
             .add_loss(Loss(actor_loss, model["means"], model["sigmas"], model["value"]),    
@@ -58,15 +63,8 @@ class BrainContinuous(Brain):
             .compile(optimizer=self.Optimizer)
         return model
     
-    def default_model(self, input_shapes, num_controls, hidden):
-        if isinstance(input_shapes, tuple):
-            input_shapes = [input_shapes]
-        inputs = [Input(input_shape, name=f"input_{i}") for i, input_shape in enumerate(input_shapes)]
-        if len(inputs) == 1:
-            inp = inputs[0]
-        else:
-            flattened = [Flatten()(inp) if len(inp.Shape)>1 else inp for inp in inputs]
-            inp = Concatenate()(*flattened)
+    def default_model(self, input_shape, num_controls, hidden):
+        inp = Input(input_shape, name="input")
         common1 = Dense(hidden, activation="relu", name="common1")(inp)
         common = Dense(max(hidden//2, num_controls*10), activation="relu", name="common")(common1)
 
@@ -114,7 +112,9 @@ class BrainContinuous(Brain):
         
     def evaluate_states(self, states):
         #print("Brain.evaluate_many: states:", type(states), len(states))
-        probs, values = self.Model.compute([states])
+        #print("    ", states)
+        states = np.array(states)
+        probs, values = self.Model.compute(states)
         means, sigmas = probs[:,:self.NControls], probs[:,self.NControls:]
         return (means, sigmas), values[:,0]
         

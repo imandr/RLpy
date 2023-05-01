@@ -108,6 +108,7 @@ class CartPoleContinuousEnv(gym.Env):
 
         x, x_dot, theta, theta_dot = self.state
         force = action[0]
+        #print("Cartpole_cont: force:", force)
         force = max(force, min(force, self.force_mag*2), -self.force_mag*2)
         costheta = math.cos(theta)
         sintheta = math.sin(theta)
@@ -139,7 +140,7 @@ class CartPoleContinuousEnv(gym.Env):
         )
 
         if not done:
-            reward = 0.0
+            reward = 0.01
         elif self.steps_beyond_done is None:
             # Pole just fell!
             self.steps_beyond_done = 0

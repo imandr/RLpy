@@ -117,7 +117,7 @@ EnvParams = {
         "brain":  BrainDiscrete,
         "gamma":    0.9,
         "target":   -0.01,
-        "max_steps_per_episode":    200,
+        "max_steps_per_episode":    500,
         "learning_rate":    0.01,
         "critic_weight":    0.5,
         "entropy_weight":   0.0001,
@@ -127,13 +127,13 @@ EnvParams = {
     "cartpole_cont":  {
         "brain":  BrainContinuous,
         "gamma":    0.9,
-        "target":   -0.01,
-        "max_steps_per_episode":    200,
+        "target":   4.99,
+        "max_steps_per_episode":    500,
         "learning_rate":    0.01,
         "critic_weight":    0.5,
-        "entropy_weight":   0.0,
+        "entropy_weight":   0.0001,
         "actor_weight":    1.0,
-        "cutoff":           1
+        #"cutoff":           1
     },
     "sequence":  {
         "brain":  RNNBrain,
@@ -485,6 +485,7 @@ if hasattr(env, "create_model"):
 print("optimizer:", optimizer)
 
 
+print("Env observation space:", env.observation_space, env.observation_space.shape)
 print("Env action space shape:", env.action_space, env.action_space.shape)
 
 brain = brain_class(env.observation_space.shape, env.NActions, model=model,
