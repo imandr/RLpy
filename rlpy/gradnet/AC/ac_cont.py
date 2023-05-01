@@ -68,12 +68,9 @@ class BrainContinuous(Brain):
         common1 = Dense(hidden, activation="relu", name="common1")(inp)
         common = Dense(max(hidden//2, num_controls*10), activation="relu", name="common")(common1)
 
-        critic1 = Dense(max(hidden//5, 10), name="critic1", activation="relu")(common)
-        value = Dense(1, name="critic")(critic1)
-
-        action1 = Dense(max(hidden//5, num_controls*10), activation="relu", name="action1")(common)
-        sigmas = Dense(num_controls, name="sigmas", activation="softplus")(action1)
-        means = Dense(num_controls, name="means", activation="linear")(action1)
+        value = Dense(1, name="critic")(common)
+        sigmas = Dense(num_controls, name="sigmas", activation="softplus")(common)
+        means = Dense(num_controls, name="means", activation="linear")(common)
         
         probs = Concatenate()(means, sigmas)
         
