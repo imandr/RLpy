@@ -18,18 +18,13 @@ class Agent(object):
 
         callbacks = CallbackList.convert(callbacks)
 
-        action_probs_history = []
         rewards_history = []
-        actions_history = []
+        action_history = []
         observation_history = []
         valids_history = []
         values_history = []
         meta_history = []
         probs_history = []
-        means_history = []
-        sigmas_history = []
-        controls_history = []
-        env_actions_history = []
         
 
         if False:
@@ -47,6 +42,8 @@ class Agent(object):
         else:
             state, meta = tup, {}
 
+        #print("Agent.play_episode: state:", state)
+
         if render:
             env.render()
             
@@ -61,8 +58,6 @@ class Agent(object):
         
         while (not done) and (max_steps is None or steps < max_steps):
             #print("calculating probs...")
-            if not isinstance(state, list):
-                state = [state]                 # always a list of np arrays
 
             observation_history.append(state)
                 
@@ -74,34 +69,23 @@ class Agent(object):
                 # assume it's consistent through the episode
                 valids_history.append(valid_actions)
 
-            value, probs, means, sigmas, actions, controls, env_action = self.Brain.action(state, valid_actions, training)
+            value, probs, action = self.Brain.action(state, valid_actions, training)
             
-            # probs is a structure describing the probabilities for various actions here 
-            # action can be:
-            # int - single discrete action
-            # float - single control
-            # ndarray of ints - multiple discrete actions
-            # ndarray of floats - multiple controls
-            # tuple (int or ndarray of ints, float or ndattay of floats)
+            # probs and actions are abstract, depending on the game/brain
             
             probs_history.append(probs)
-            actions_history.append(actions)
+            action_history.append(action)
             values_history.append(value)
-            probs_history.append(probs)
-            means_history.append(means)
-            sigmas_history.append(sigmas)
-            controls_history.append(controls)
-            env_actions_history.append(env_action)
             
-            new_state, reward, done, meta = env.step(env_action)
+            new_state, reward, done, meta = env.step(action)
             
             if callbacks:
-                callbacks("agent_episode_step", self, env_action, new_state, reward, done, meta)
+                callbacks("agent_episode_step", self, action, new_state, reward, done, meta)
 
             meta_history.append(meta)
 
-            if True:
-                print("state:", state, "  probs:", probs, "  action:", env_action, "  reward:", reward, " new state:", new_state, "  done:", done)
+            if False:
+                print("state:", state, "  probs:", probs, "  action:", action, "  reward:", reward, " new state:", new_state, "  done:", done)
             #print("p:", action, state, reward, done)
             
             state = new_state
@@ -124,14 +108,11 @@ class Agent(object):
         self.EpisodeHistory = dict(
             rewards = np.array(rewards_history),
             observations = observation_history,
-            actions = np.array(actions_history, dtype=np.int),
+            #actions = np.array(actions_history, dtype=np.int),
             probs = np.array(probs_history),
-            means = np.array(means_history),
-            sigmas = np.array(sigmas_history),
-            controls = np.array(controls_history),
             valid_actions = np.array(valids_history) if valids_history else None,
             meta = meta_history,
-            env_actions = env_actions_history
+            actions = action_history
         )
 
         if callbacks:

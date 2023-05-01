@@ -27,10 +27,6 @@ def _calc_retruns(gamma, rewards, value_weights, values):
     T = len(rewards)
     t = T-1
     returns = np.empty((T,))
-    #print("_calc_retruns:")
-    #print("  rewards:      ", rewards)
-    #print("  values:       ", values)
-    #print("  value_weights:", value_weights)
     for r, w, v in list(zip(rewards, value_weights, values))[::-1]:
         ret = r + gamma*(prev_ret*(1-prev_w) + prev_value*prev_w)
         returns[t] = ret
@@ -101,20 +97,19 @@ def critic_loss(_, values, data):
     grads = 2*d
     return losses, grads
     
-class Brain(object):
+class BaseBrain(object):
     
     def __init__(self, input_shape=None, num_actions=None, model=None, optimizer=None, hidden=128, gamma=0.99, 
-            with_rnn = False,
             learning_rate = 0.001,       # learning rate for the common part and the Actor
             entropy_weight = 0.01,
             invalid_action_weight = 0.5,
             critic_weight = 1.0, actor_weight=1.0,
-            cutoff = None, beta = None     # if cutoff is not None, beta is ignored
+            cutoff = 1, beta = None     # if cutoff is not None, beta is ignored
                                         # if cutoff is None and beta is None, entropy is used
                                         # otherwise beta is used
         ):
         
-        #print("Brain(input_shape=", input_shape,"  num_actions=", num_actions, ")")
+        print("Brain(input_shape=", input_shape,"  num_actions=", num_actions, ")")
         
         if isinstance(input_shape, int):
             input_shape = (input_shape,)
@@ -128,46 +123,38 @@ class Brain(object):
         self.RetSTD =  1.0
         self.NormAlpha = 0.001
         self.FutureValueCutoff = cutoff
-
+        
+        self.EntropyWeight = entropy_weight
         self.InvalidActionWeight = invalid_action_weight
         self.CriticWeight = critic_weight
-        self.ActorWeight = actor_weight
-        self.EntropyWeight = entropy_weight
 
-        if model is None:   model = self.create_model(input_shape, num_actions, hidden)
+        model = self.create_model(input_shape, num_actions, hidden)
+        self.add_losses
+
+        if model is None:   
+             if not with_rnn \
+                    else self.default_rnn_model(input_shape, num_actions, hidden)
+
+            # .add_loss(Loss("mse", model["value"]),                        critic_weight, name="critic_loss")  \
+        model   \
+            .add_loss(Loss(critic_loss, model["value"]),                   critic_weight, name="critic_loss")  \
+            .add_loss(Loss(actor_loss, model["probs"], model["value"]),    actor_weight, name="actor_loss")     \
+            .add_loss(Loss(entropy_loss, model["probs"]),                  entropy_weight, name="entropy_loss") \
+            .add_loss(Loss(invalid_actions_loss, model["probs"]),          invalid_action_weight, name="invalid_action_loss")   \
+            .compile(optimizer=self.Optimizer)
+            
         if True:
             print("model losses and weights:")
             for name, (loss, weight) in model.Losses.items():
                 print(f"{name}: {loss} * {weight}")
+
         self.Model = model
-
-    def create_model(self, input_shape, num_actions, hidden):
-        model = self.default_model(input_shape, num_actions, hidden)
-        model   \
-            .add_loss(Loss(critic_loss, model["value"]),                   self.CriticWeight, name="critic_loss")  \
-            .add_loss(Loss(actor_loss, model["probs"], model["value"]),    self.ActorWeight, name="actor_loss")     \
-            .add_loss(Loss(entropy_loss, model["probs"]),                  self.EntropyWeight, name="entropy_loss") \
-            .add_loss(Loss(invalid_actions_loss, model["probs"]),          self.InvalidActionWeight, name="invalid_action_loss")   \
-            .compile(optimizer=self.Optimizer)
-        return model
-
-    def default_model(self, input_shape, num_actions, hidden):
-        inp = Input(input_shape, name="input")
-        common1 = Dense(hidden, activation="relu", name="common1")(inp)
-        common = Dense(hidden//2, activation="relu", name="common")(common1)
-
-        #action1 = Dense(max(hidden//5, num_actions*5), activation="relu", name="action1")(common)
-        probs = Dense(num_actions, name="action", activation="softmax")(common)
         
-        #critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
-        value = Dense(1, name="critic")(common)
-
-        model = Model([inp], [probs, value])
         
-        model["value"] = value
-        model["probs"] = probs
-        
-        return model
+    # abstract methods
+    def create_model(input_shape, outputs, *params, **args):
+        # create model and add losses
+        raise NotImplementedError()
         
     def weights_as_dict(self):
         out = {}
@@ -211,19 +198,54 @@ class Brain(object):
         self.Model.update_weights(source, alpha)
         return old
                     
+    def default_model(self, input_shape, num_actions, hidden):
+        inp = Input(input_shape, name="input")
+        common1 = Dense(hidden, activation="relu", name="common1")(inp)
+        common = Dense(hidden//2, activation="relu", name="common")(common1)
+
+        #action1 = Dense(max(hidden//5, num_actions*5), activation="relu", name="action1")(common)
+        probs = Dense(num_actions, name="action", activation="softmax")(common)
+        
+        #critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
+        value = Dense(1, name="critic")(common)
+
+        model = Model([inp], [probs, value])
+        
+        model["value"] = value
+        model["probs"] = probs
+        
+        return model
+        
     def reset_episode(self):    # overridable
         self.Model.reset_state()
         
-    def evaluate_sequence(self, states):
-        print("Brain.evaluate_many: states:", type(states), len(states), states)
+    def policy(self, probs, training, valid_actions=None):
+        
+        probs = np.squeeze(probs)
+        if False and not training:
+            # make it a bit more greedy
+            probs = probs*probs
+            probs = probs/np.sum(probs)
+
+        if valid_actions is not None:
+            probs = self.valid_probs(probs, valid_actions)
+
+        action = np.random.choice(self.NActions, p=probs)
+        return action
+        
+    def evaluate_step(self, prev_action, state):
+        if not isinstance(state, list):
+            state = [state]
+        state = [s[None,...] for s in state]        # add minibatch dimension
+        #print("evaluate_single: state shapes:", [s.shape for s in state])
+        probs, values = self.Model.compute(state)        
+        return values[0,0], probs[0,:] 
+        
+    def evaluate_sequence(self, prev_actions, states):
+        #print("Brain.evaluate_many: states:", type(states), len(states))
         probs, values = self.Model.compute(states)
         return values[:,0], probs
         
-    def action(self, state, valid_actions, training):
-        probs, value = self.evaluate_state(state)
-        action = self.policy(probs, training, valid_actions)
-        return value, probs, action
-
     def save(self, filename):
         self.Model.save_weights(filename)
         
@@ -295,10 +317,6 @@ class Brain(object):
         out = []
         T = len(rewards)
         #print("T=", T)
-        if True:
-            print("calculate_future_returns_with_cutoff: gamma=", self.Gamma, "  cutoff=", cutoff)
-            print("  rewards:", rewards)
-            print("  powers: ", gamma_powers)
         rets = np.empty((T,), dtype=np.float32)
         for t in range(T):
             ret = 0.0
@@ -308,7 +326,7 @@ class Brain(object):
             if t+cutoff < T:
                 #print("     +V:", vals[t+cutoff])
                 ret += values[t+cutoff]*self.Gamma**cutoff
-            print("t:", t, "   ret:", ret)
+            #print("t:", t, "   ret:", ret)
             rets[t] = ret
         if False:
             print("calculate_future_returns_with_cutoff: gamma=", self.Gamma, "  cutoff=", cutoff)
@@ -343,23 +361,23 @@ class Brain(object):
     def add_losses_from_episode(self, h):
 
         rewards = h["rewards"]
-        observations = h["observations"]        # list of observatons: [(state1, state2, ...)]
-        
+        observations = h["observations"]
         actions = h["actions"]
         valids = h["valid_actions"]
         T = len(actions)
 
-        #print("Brain.add_losses_from_episode: observations:", type(observations), observations)
+        #print("Brain.add_losses_from_episode: observations:", type(observations))
 
         # transpose observations history
-        states_by_column = [np.array(column) for column in zip(*observations)]
+        xcolumns = [np.array(column) for column in zip(*observations)]
         prev_actions = np.roll(actions, 1)
         prev_actions[0] = -1
 
         #print("episode observations shape:", observations.shape)
         #print("add_losses: reset_state()")
         self.Model.reset_state()
-        probs, values = self.evaluate_states(observations)
+        values, probs = self.evaluate_sequence(prev_actions, xcolumns)
+
         valid_probs = self.valid_probs(probs, valids)
         returns = self.calculate_future_returns(rewards, valid_probs, values)
         h["returns"] = returns
@@ -406,12 +424,6 @@ class Brain(object):
         
         for h in multi_ep_history:
             if len(h.get("actions")):       # episode was not empty
-            
-                #print("train_on_multi_episode_history: h:")
-                #for name, data in h.items():
-                #    print("   ", name, data)
-            
-            
                 stats = self.add_losses_from_episode(h)
                 actor_losses += stats["actor_loss"]
                 invalid_action_losses += stats["invalid_action_loss"]

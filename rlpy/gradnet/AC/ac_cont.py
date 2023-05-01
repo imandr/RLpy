@@ -44,12 +44,23 @@ class BrainContinuous(Brain):
     
     def __init__(self, observation_space, ncontrols, **args):
         Brain.__init__(self, observation_space, ncontrols, **args)
-        if isinstance(observation_space, int):
-            self.NControls = observation_space
-        elif isinstance(observation_space, spaces.Box):
-            self.NControls = observation_space.shape[-1]            
+        self.NControls = ncontrols
+        #print("BrainContinuous(): NControls:", self.NControls)
+            
+    def create_model(self, input_shapes, num_controls, hidden):
+        model = self.default_model(input_shapes, num_controls, hidden)
+        model   \
+            .add_loss(Loss(critic_loss, model["value"]),                   self.CriticWeight, name="critic_loss")  \
+            .add_loss(Loss(actor_loss, model["means"], model["sigmas"], model["value"]),    
+                                                                            self.ActorWeight, name="actor_loss")     \
+            .add_loss(Loss(entropy_loss, model["sigmas"]),                  self.EntropyWeight, name="entropy_loss")    \
+            .add_loss(Loss("zero", model["means"]),                         self.InvalidActionWeight, name="invalid_action_loss")   \
+            .compile(optimizer=self.Optimizer)
+        return model
     
     def default_model(self, input_shapes, num_controls, hidden):
+        if isinstance(input_shapes, tuple):
+            input_shapes = [input_shapes]
         inputs = [Input(input_shape, name=f"input_{i}") for i, input_shape in enumerate(input_shapes)]
         if len(inputs) == 1:
             inp = inputs[0]
@@ -66,21 +77,17 @@ class BrainContinuous(Brain):
         sigmas = Dense(num_controls, name="sigmas", activation="softplus")(action1)
         means = Dense(num_controls, name="means", activation="linear")(action1)
         
-        model = Model([inp], [means, sigmas, value])
+        probs = Concatenate()(means, sigmas)
+        
+        model = Model([inp], [probs, value])
         
         model["value"] = value
         model["means"] = means
         model["sigmas"] = sigmas
+        model["probs"] = probs
         
         return model
 
-    def add_losses(self, model, critic_weight=1.0, actor_weight=1.0, entropy_weight=0.0, **_):
-        model   \
-            .add_loss(Loss(critic_loss, model["value"]),                   critic_weight, name="critic_loss")  \
-            .add_loss(Loss(actor_loss, model["means"], model["sigmas"], model["value"]),    actor_weight, name="actor_loss")     \
-            .add_loss(Loss(entropy_loss, model["sigmas"]),                  entropy_weight, name="entropy_loss")
-        return model
-        
     def policy(self, controls, training, valid_actions=None):
         # controls is tuple (means, sigmas)
         
@@ -91,18 +98,23 @@ class BrainContinuous(Brain):
             sigmas = sigmas/2
 
         actions = np.random.normal(means, sigmas)
+        #print("BrainContinuous.policy(): means:", means, "   sigmas:", sigmas, "   actions:", actions)
         return actions
         
-    def evaluate_single(self, action, state):
+    def evaluate_state(self, state):
         if not isinstance(state, list):
             state = [state]
         state = [s[None,...] for s in state]        # add minibatch dimension
         #print("evaluate_single: state shapes:", [s.shape for s in state])
-        means, sigmas, values = self.Model.compute(state)        
+        probs, values = self.Model.compute(state)
+        #print("BrainContinuous.evaluate_state: probs, values:", type(probs), probs, type(values), values)
+        means, sigmas = probs[:,:self.NControls], probs[:,self.NControls:]
+        #print("BrainContinuous.evaluate_state: means, sigmas:", means, sigmas)
         return (means[0,:], sigmas[0,:]), values[0,0]
         
-    def evaluate_many(self, actions, states):
+    def evaluate_states(self, states):
         #print("Brain.evaluate_many: states:", type(states), len(states))
-        means, sigmas, values = self.Model.compute(states)
+        probs, values = self.Model.compute([states])
+        means, sigmas = probs[:,:self.NControls], probs[:,self.NControls:]
         return (means, sigmas), values[:,0]
         

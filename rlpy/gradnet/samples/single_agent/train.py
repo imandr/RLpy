@@ -11,8 +11,7 @@ from cluster_analysis_k import ClusterKEnv
 from sequence_env import SequenceEnv
 from single_agent_ttt_env import SingleAgentTicTacToeEnv
 from counter import CounterEnv
-from mnist_env import MNISTEnv
-from rlpy.gradnet.AC import Brain, RNNBrain, BrainContinuous
+from rlpy.gradnet.AC import Brain, RNNBrain, BrainContinuous, BrainDiscrete
 from rlpy import Agent, Trainer, Callback
 from util import Monitor
 import numpy as np
@@ -106,6 +105,7 @@ EnvParams = {
         "beta":             None
     },
     "CartPole-v0":  {
+        "brain":  BrainDiscrete,
         "target":   195.0,
         "max_steps_per_episode":    200,
         "learning_rate":    0.001,
@@ -114,6 +114,7 @@ EnvParams = {
         "actor_weight":    1.0,
     },
     "cartpole":  {
+        "brain":  BrainDiscrete,
         "gamma":    0.9,
         "target":   -0.01,
         "max_steps_per_episode":    200,
@@ -121,7 +122,7 @@ EnvParams = {
         "critic_weight":    0.5,
         "entropy_weight":   0.0001,
         "actor_weight":    1.0,
-        "cutoff":           1
+        #"cutoff":           1
     },
     "cartpole_cont":  {
         "brain":  BrainContinuous,
@@ -199,8 +200,8 @@ EnvParams = {
         "actor_weight":     0.5,
         "cutoff":           100
     },
-    "*":    {       # default parameters
-        "brain":    Brain,
+    "*-saved":    {       # default parameters
+        "brain":    BrainDiscrete,
         "continuous":   False,
         "hidden":   200,
         "rnn":  False,
@@ -208,6 +209,26 @@ EnvParams = {
         "epsilon":  0.0,
         "cutoff":   1,
         "beta":     None,
+        "learning_rate":    0.01,
+        "entropy_weight":   0.001,
+        "critic_weight":    0.5,
+        "actor_weight":    1.0,
+        "invalid_action_weight":    5.0,
+        "max_steps_per_episode":    100,
+        "max_episodes":     100000,
+        "steps_per_batch":  20,
+        "episodes_between_tests":   1000,
+        "test_episodes":        10
+    },
+    "*":    {       # default parameters
+        "brain":    BrainDiscrete,
+        "continuous":   False,
+        "hidden":   200,
+        "rnn":  False,
+        "gamma":    0.99,
+        "epsilon":  0.0,
+        "cutoff":   None,
+        "beta":     1.0,
         "learning_rate":    0.01,
         "entropy_weight":   0.001,
         "critic_weight":    0.5,
@@ -284,6 +305,7 @@ elif env_name == "counter":
 elif env_name == "sequence":
     env = SequenceEnv(10, 5)
 elif env_name == "mnist":
+    from mnist_env import MNISTEnv
     env = MNISTEnv()
 elif env_name == "game11":
     env = Game11Env()
@@ -462,7 +484,10 @@ if hasattr(env, "create_model"):
 
 print("optimizer:", optimizer)
 
-brain = brain_class(env.observation_space.shape, env.action_space.n, model=model,
+
+print("Env action space shape:", env.action_space, env.action_space.shape)
+
+brain = brain_class(env.observation_space.shape, env.NActions, model=model,
     cutoff=cutoff, beta=beta, gamma=gamma,
     hidden=hidden,
     optimizer = optimizer,

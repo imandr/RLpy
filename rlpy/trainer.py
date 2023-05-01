@@ -22,7 +22,7 @@ class TrainerBase(object):
             while buf and not done:
                 episode = buf.pop()
                 #print("TrainerBase.train_on_buffer: episode:", episode)
-                n = episode["steps"]
+                n = len(episode["actions"])
                 batch.append(episode)
                 
                 batch_steps += n
@@ -34,7 +34,7 @@ class TrainerBase(object):
             if done:
                 batch_steps, stats = brain.train_on_multi_episode_history(batch)
                 total_steps += batch_steps
-                print("TrainerBase: train batch end")
+                #print("TrainerBase: train batch end")
                 callbacks("train_batch_end", brain, self.Agents, len(batch), batch_steps, stats)
                 for episode in batch:
                     if random.random() < self.KeepRatio:

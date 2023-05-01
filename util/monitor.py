@@ -34,7 +34,7 @@ class Monitor(object):
         self.NextSave = self.SaveInterval        
         
     def start_server(self, port):
-        app = App(self, static_location="static", enable_static=True)    
+        app = App(self)    
         self.Server = HTTPServer(port, app, logging=False)
         self.Server.start()
         return self.Server
