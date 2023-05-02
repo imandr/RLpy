@@ -344,6 +344,10 @@ class Brain(object):
     def compile_losses_from_episode(self, losses):
         return losses
         
+    # overridable
+    def format_episode_history(self, history):
+        return history
+        
     def add_losses_from_episode(self, h):
 
         rewards = h["rewards"]
@@ -367,6 +371,8 @@ class Brain(object):
         valid_probs = self.valid_probs(probs, valids)
         returns = self.calculate_future_returns(rewards, valid_probs, values)
         h["returns"] = returns
+
+        h = self.format_episode_history(h)
 
         loss_values = self.Model.backprop(y_=returns[:,None], data=h)
         if False:

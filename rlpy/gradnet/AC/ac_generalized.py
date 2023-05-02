@@ -19,9 +19,10 @@ def entropy_controls_loss(_, sigmas, data):
 
 def actor_controls_loss(_, means, sigmas, values, data):        
         sigmas = np.clip(sigmas, 1e-3, None)
-        controls = data["actions"]
-        #print("actor_loss:")
+        controls = np.array(data["controls"])
+        #print("actor_controls_loss:")
         #print("            controls:", controls)
+        #print("            means:   ", means)
         #print("            sigmas:  ", sigmas)
         logprobs = -math.log(2*math.pi)/2 - np.log(sigmas) - ((controls-means)/sigmas)**2/2
         returns = data["returns"][:,None]
@@ -109,18 +110,24 @@ def critic_loss(_, values, data):
 
 class BrainMixed(Brain):
     
-    def __init__(self, observation_space, nactions, ncontrols, **args):
+    def __init__(self, observation_shape, nactions, ncontrols, **args):
         self.NActions = nactions
         self.NControls = ncontrols
-        Brain.__init__(self, observation_space, nactions, **args)
+        Brain.__init__(self, observation_shape, nactions, **args)
         #print("BrainContinuous(): NControls:", self.NControls)
+        
+    @staticmethod
+    def from_env(env, **args):
+        ncontrols = env.NControls if hasattr(env, "NControls") else 0
+        nactions = env.NActions if hasattr(env, "NActions") else 0
+        return BrainMixed(env.observation_space.shape, nactions, ncontrols, **args)
             
     def create_model(self, input_shape, hidden):
         model = self.default_model(input_shape, self.NActions, self.NControls, hidden)
         model.add_loss(Loss(critic_loss, model["value"]),                   self.CriticWeight, name="critic_loss")
 
         if self.NActions:
-            print('create_model: model["probs"]:', model["action_probs"], '   model["value"]:', model["value"])
+            #print('create_model: model["probs"]:', model["action_probs"], '   model["value"]:', model["value"])
             model \
                 .add_loss(Loss(actor_actions_loss, model["action_probs"], model["value"]), self.ActorWeight, name="actor_loss.actions")     \
                 .add_loss(Loss(invalid_actions_loss, model["action_probs"]),               self.InvalidActionWeight, name="invalid_action_loss")   \
@@ -168,7 +175,6 @@ class BrainMixed(Brain):
         model["probs"] = probs
         
         return model
-
 
     def policy(self, probs, training, valid_actions=None):
         action = controls = None
@@ -218,6 +224,19 @@ class BrainMixed(Brain):
                 prefix = name
             out[prefix] = out.get(prefix, 0.0) + value
         #print("compile_losses_from_episode: out:", out)
+        return out
+
+    def format_episode_history(self, history):
+        # split (action, controls) tuples into separate items
+        out = history
+        if self.NControls:
+            out = history.copy()
+            if self.NActions:
+                out = history.copy()
+                out["actions"] = [a[0] for a in history["actions"]]
+                out["controls"] = [a[1] for a in history["actions"]]
+            else:
+                out["controls"] = history["actions"]            
         return out
 
 class BrainDiscrete(BrainMixed):

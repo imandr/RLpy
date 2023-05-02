@@ -11,7 +11,7 @@ from cluster_analysis_k import ClusterKEnv
 from sequence_env import SequenceEnv
 from single_agent_ttt_env import SingleAgentTicTacToeEnv
 from counter import CounterEnv
-from rlpy.gradnet.AC import Brain, RNNBrain, BrainContinuous, BrainDiscrete
+from rlpy.gradnet.AC import Brain, RNNBrain, BrainContinuous, BrainDiscrete, BrainMixed
 from rlpy import Agent, Trainer, Callback
 from util import Monitor
 import numpy as np
@@ -112,6 +112,17 @@ EnvParams = {
         "critic_weight":    0.5,
         "entropy_weight":   0.01,
         "actor_weight":    1.0,
+    },
+    "cartpole_mixed":  {
+        "brain":  None,
+        "gamma":    0.9,
+        "target":   4.99,
+        "max_steps_per_episode":    500,
+        "learning_rate":    0.01,
+        "critic_weight":    0.5,
+        "entropy_weight":   0.0001,
+        "actor_weight":    1.0,
+        #"cutoff":           1
     },
     "cartpole":  {
         "brain":  BrainDiscrete,
@@ -292,6 +303,9 @@ elif env_name == "walker":
     env = WalkerEnv()
 elif env_name == "ttt":
     env = SingleAgentTicTacToeEnv()
+elif env_name == "cartpole_mixed":
+    from cartpole_mixed import CartPoleMixedEnv
+    env = CartPoleMixedEnv()
 elif env_name == "cartpole":
     env = CartPoleEnv()
 elif env_name == "cartpole_cont":
@@ -488,15 +502,26 @@ print("optimizer:", optimizer)
 print("Env observation space:", env.observation_space, env.observation_space.shape)
 print("Env action space shape:", env.action_space, env.action_space.shape)
 
-brain = brain_class(env.observation_space.shape, env.NActions, model=model,
-    cutoff=cutoff, beta=beta, gamma=gamma,
-    hidden=hidden,
-    optimizer = optimizer,
-    actor_weight = actor_weight,
-    critic_weight = critic_weight,
-    entropy_weight = entropy_weight,
-    invalid_action_weight = invalid_action_weight
+if brain_class is None:
+    brain = BrainMixed.from_env(env, 
+        cutoff=cutoff, beta=beta, gamma=gamma,
+        hidden=hidden,
+        optimizer = optimizer,
+        actor_weight = actor_weight,
+        critic_weight = critic_weight,
+        entropy_weight = entropy_weight,
+        invalid_action_weight = invalid_action_weight
     )
+else:
+    brain = brain_class(env.observation_space.shape, env.NActions, model=model,
+        cutoff=cutoff, beta=beta, gamma=gamma,
+        hidden=hidden,
+        optimizer = optimizer,
+        actor_weight = actor_weight,
+        critic_weight = critic_weight,
+        entropy_weight = entropy_weight,
+        invalid_action_weight = invalid_action_weight
+        )
 
 if load_from:
     brain.load(load_from)
