@@ -134,7 +134,7 @@ class Brain(object):
         self.ActorWeight = actor_weight
         self.EntropyWeight = entropy_weight
 
-        if model is None:   model = self.create_model(input_shape, num_actions, hidden)
+        if model is None:   model = self.create_model(input_shape, hidden)
         if True:
             print("model losses and weights:")
             for name, (loss, weight) in model.Losses.items():
@@ -339,6 +339,10 @@ class Brain(object):
             probs = valid_masks * probs
             probs = probs/np.sum(probs, axis=-1, keepdims=True)
         return probs
+    
+    # overridable
+    def compile_losses_from_episode(self, losses):
+        return losses
         
     def add_losses_from_episode(self, h):
 
@@ -380,7 +384,9 @@ class Brain(object):
         stats["sum_values"] = np.sum(values)
         stats["sum_rewards"] = np.sum(rewards)
         stats["sum_returns"] = np.sum(returns)
-        
+
+        stats = self.compile_losses_from_episode(stats)
+
         return stats        
         
     def train_on_multi_episode_history(self, multi_ep_history):

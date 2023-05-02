@@ -116,7 +116,7 @@ EnvParams = {
     "cartpole":  {
         "brain":  BrainDiscrete,
         "gamma":    0.9,
-        "target":   -0.01,
+        "target":   4.99,
         "max_steps_per_episode":    500,
         "learning_rate":    0.01,
         "critic_weight":    0.5,
@@ -238,7 +238,7 @@ EnvParams = {
         "max_episodes":     100000,
         "steps_per_batch":  20,
         "episodes_between_tests":   1000,
-        "test_episodes":        10
+        "test_episodes":        3
     }
 }
 

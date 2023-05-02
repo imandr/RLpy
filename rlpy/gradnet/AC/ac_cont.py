@@ -48,12 +48,12 @@ def critic_loss(_, values, data):
 class BrainContinuous(Brain):
     
     def __init__(self, observation_space, ncontrols, **args):
-        Brain.__init__(self, observation_space, ncontrols, **args)
         self.NControls = ncontrols
+        Brain.__init__(self, observation_space, ncontrols, **args)
         #print("BrainContinuous(): NControls:", self.NControls)
             
-    def create_model(self, input_shape, num_controls, hidden):
-        model = self.default_model(input_shape, num_controls, hidden)
+    def create_model(self, input_shape, hidden):
+        model = self.default_model(input_shape, self.NControls, hidden)
         model   \
             .add_loss(Loss(critic_loss, model["value"]),                   self.CriticWeight, name="critic_loss")  \
             .add_loss(Loss(actor_loss, model["means"], model["sigmas"], model["value"]),    

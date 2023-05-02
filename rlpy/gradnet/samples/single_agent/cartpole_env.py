@@ -135,7 +135,7 @@ class CartPoleEnv(gym.Env):
         )
 
         if not done:
-            reward = 0.0
+            reward = 0.01
         elif self.steps_beyond_done is None:
             # Pole just fell!
             self.steps_beyond_done = 0
