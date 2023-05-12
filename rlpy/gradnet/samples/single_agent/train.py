@@ -113,6 +113,17 @@ EnvParams = {
         "entropy_weight":   0.01,
         "actor_weight":    1.0,
     },
+    "air_defense":  {
+        "brain":  None,
+        "gamma":    0.9,
+        "target":   4.99,
+        "max_steps_per_episode":    200,
+        "learning_rate":    0.01,
+        "critic_weight":    0.5,
+        "entropy_weight":   0.0001,
+        "actor_weight":    1.0,
+        #"cutoff":           1
+    },
     "cartpole_mixed":  {
         "brain":  None,
         "gamma":    0.9,
@@ -301,6 +312,9 @@ if env_name == "tanks":
     env = TankTargetEnv()
 elif env_name == "walker":
     env = WalkerEnv()
+elif env_name == "air_defense":
+    from air_defense import AirDefenseEnv
+    env = AirDefenseEnv()
 elif env_name == "ttt":
     env = SingleAgentTicTacToeEnv()
 elif env_name == "cartpole_mixed":
@@ -500,7 +514,6 @@ print("optimizer:", optimizer)
 
 
 print("Env observation space:", env.observation_space, env.observation_space.shape)
-print("Env action space shape:", env.action_space, env.action_space.shape)
 
 if brain_class is None:
     brain = BrainMixed.from_env(env, 

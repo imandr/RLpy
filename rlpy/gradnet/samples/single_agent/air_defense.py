@@ -1,4 +1,4 @@
-import math
+import math, time
 import gym
 from gym import spaces, logger
 from gym.utils import seeding
@@ -9,7 +9,7 @@ class AirDefenseEnv(gym.Env):
     NActions = 2
     NControls = 1
     
-    DEG2RAD = math.PI / 180.0
+    DEG2RAD = math.pi / 180.0
     
     H0 = 1.0
     VMissle = H0/20.0
@@ -17,7 +17,7 @@ class AirDefenseEnv(gym.Env):
     D = 1.0
     AMax = 20 * DEG2RAD
     X0 = 0.2
-    R = 0.01            # kill radius
+    R = 0.1            # kill radius
     
     def __init__(self):
         self.seed()
@@ -34,13 +34,18 @@ class AirDefenseEnv(gym.Env):
         self.AMissleY = None
         self.AMissleVX = None
         self.AMissleVY = None
+
+        low = np.array([0.0, -self.D, 0.0, -math.pi/2])
+        high = np.array([1.0, self.D, self.H0, math.pi/2])
+
+        self.observation_space = spaces.Box(low, high, dtype=np.float32)
         
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
     
-    def state(self):
-        fired = self.self.AMissleX is not None
+    def state_vector(self):
+        fired = self.AMissleX is not None
         return np.array([1.0 if fired else 0.0, self.MissleX, self.MissleY, self.MissleA])
     
     def reset(self):
@@ -53,7 +58,7 @@ class AirDefenseEnv(gym.Env):
         
         self.AMissleX = self.AMissleY = None
         
-        return self.state()
+        return self.state_vector()
         
     def step(self, action):
         fire, angle = action
@@ -65,9 +70,10 @@ class AirDefenseEnv(gym.Env):
         hit = False
         
         if fire and self.AMissleX is None:
+            #print("fire")
             self.AMissleX = self.AMissleY = 0.0
             self.AMissleA = angle
-            self.AMissleVX = self.VAntiMissle * math.sin(self.AMissleA)
+            self.AMissleVX = -self.VAntiMissle * math.sin(self.AMissleA)
             self.AMissleVY = self.VAntiMissle * math.cos(self.AMissleA)
         
         if self.AMissleX is not None:
@@ -81,7 +87,38 @@ class AirDefenseEnv(gym.Env):
         
         reward = 1.0 if hit else (-1.0 if ground else 0.0)
         done = ground or hit
-        return self.state(), reward, done, {}
+        return self.state_vector(), reward, done, {}
             
                 
+    def render(self):
+        screen_width = 800
+        screen_height = 400
         
+        if self.viewer is None:
+            from draw2d import Viewer, Frame, FilledPolygon
+            self.viewer = Viewer(screen_width, screen_height)
+            self.outer_frame = self.viewer.frame(-self.D, self.D, 0, self.H0)
+            
+            self.MissleFrame = Frame(scale = 0.05)
+            missle = FilledPolygon([(-0.1, -0.5), (0.1, -0.5), (0.0, 0.5)]).color(0.9, 0.3, 0.2).rotate_by(math.pi)
+            self.MissleFrame.add(missle)
+
+            self.AMissleFrame = Frame(scale = 0.05)
+            amissle = FilledPolygon([(-0.1, -0.5), (0.1, -0.5), (0.0, 0.5)]).color(0.3, 0.9, 0.2)
+            self.AMissleFrame.add(amissle)
+            self.AMissleFrame.hide()
+            
+            self.outer_frame.add(self.MissleFrame)
+            self.outer_frame.add(self.AMissleFrame)
+            
+        if self.AMissleX is not None:
+            self.AMissleFrame.move_to(self.AMissleX, self.AMissleY)
+            self.AMissleFrame.rotate_to(self.AMissleA)
+            self.AMissleFrame.show()
+            
+        self.MissleFrame.move_to(self.MissleX, self.MissleY)
+        self.MissleFrame.rotate_to(self.MissleA)
+
+        time.sleep(0.1)
+
+        return self.viewer.render()
