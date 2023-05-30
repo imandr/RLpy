@@ -126,7 +126,7 @@ EnvParams = {
     },
     "cartpole":  {
         "brain":  BrainDiscrete,
-        "gamma":    0.9,
+        "gamma":    0.99,
         "target":   4.99,
         "max_steps_per_episode":    500,
         "learning_rate":    0.01,
@@ -137,11 +137,11 @@ EnvParams = {
     },
     "cartpole_cont":  {
         "brain":  BrainContinuous,
-        "gamma":    0.9,
+        "gamma":    0.99,
         "target":   4.99,
         "max_steps_per_episode":    500,
         "learning_rate":    0.01,
-        "critic_weight":    0.5,
+        "critic_weight":    1.0,
         "entropy_weight":   0.0001,
         "actor_weight":    1.0,
         #"cutoff":           1
@@ -273,6 +273,7 @@ for k, v in sorted(params.items()):
     print("  ", k,"=",v)
 
 gamma = params["gamma"]
+print("gamma:", gamma)
 comment = params.get("comment", "")
 learning_rate = params["learning_rate"]
 cutoff = params["cutoff"]
