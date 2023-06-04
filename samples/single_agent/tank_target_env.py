@@ -105,7 +105,7 @@ class TankTargetEnv(object):
             delta = distance * math.sin(abs(a-self.Angle))
             self.Hit = abs(self.Angle - a) < math.pi/4 and delta < self.Width and distance < self.FireRange + self.Width
             if self.Hit:
-                print("hit")
+                #print("hit")
                 done = True
                 reward = self.HitReward
             else:

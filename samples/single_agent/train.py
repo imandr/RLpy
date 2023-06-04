@@ -11,8 +11,7 @@ from cluster_analysis_k import ClusterKEnv
 from sequence_env import SequenceEnv
 from single_agent_ttt_env import SingleAgentTicTacToeEnv
 from counter import CounterEnv
-from rlpy.gradnet.AC import Brain, RNNBrain, BrainContinuous, BrainDiscrete, BrainMixed
-from rlpy import Agent, Trainer, Callback
+from rlpy import BrainContinuous, BrainDiscrete, BrainMixed, Agent, Trainer, Callback, RNNBrain
 from util import Monitor
 import numpy as np
 import sys, getopt, math
@@ -72,8 +71,8 @@ EnvParams = {
     "tanks":    {
         "target":   9.5,
         "beta":     0.5,
-        "entropy_weight":   0.01,
-        "cutoff":   10
+        "entropy_weight":   0.0001,
+        #"cutoff":   10
     },
     "ttt":    {
         "hidden":   400,
@@ -115,18 +114,18 @@ EnvParams = {
     },
     "air_defense":  {
         "brain":  None,
-        "gamma":    0.9,
+        "gamma":    0.99,
         "target":   4.99,
         "max_steps_per_episode":    200,
         "learning_rate":    0.01,
         "critic_weight":    0.5,
-        "entropy_weight":   0.0001,
+        "entropy_weight":   0.001,
         "actor_weight":    1.0,
         #"cutoff":           1
     },
     "cartpole_mixed":  {
         "brain":  None,
-        "gamma":    0.9,
+        "gamma":    0.99,
         "target":   4.99,
         "max_steps_per_episode":    500,
         "learning_rate":    0.01,

@@ -56,8 +56,8 @@ class AirDefenseEnv(gym.Env):
         self.MissleVX = self.VMissle * math.sin(self.MissleA)
         self.MissleVY = -self.VMissle * math.cos(self.MissleA)
         
-        self.AMissleX = self.AMissleY = None
-        
+        self.AMissleX = self.AMissleY = self.LastDist = None
+        self.Hit = False
         return self.state_vector()
         
     def step(self, action):
@@ -67,26 +67,41 @@ class AirDefenseEnv(gym.Env):
         self.MissleX += self.MissleVX
         self.MissleY += self.MissleVY
         
-        hit = False
+        hit = closer = ground = False
         
         if fire and self.AMissleX is None:
-            #print("fire")
-            self.AMissleX = self.AMissleY = 0.0
-            self.AMissleA = angle
-            self.AMissleVX = -self.VAntiMissle * math.sin(self.AMissleA)
-            self.AMissleVY = self.VAntiMissle * math.cos(self.AMissleA)
+            print("fire, at angle:", angle)
+            if angle < 0.0 or angle > math.pi:
+                ground = True
+            else:
+                self.AMissleX = self.AMissleY = 0.0
+                self.AMissleA = angle
+                self.AMissleVX = -self.VAntiMissle * math.sin(self.AMissleA)
+                self.AMissleVY = self.VAntiMissle * math.cos(self.AMissleA)
         
         if self.AMissleX is not None:
             self.AMissleX += self.AMissleVX
             self.AMissleY += self.AMissleVY
             dx = self.AMissleX - self.MissleX
             dy = self.AMissleY - self.MissleY
-            hit = math.sqrt(dx*dx + dy*dy) <= self.R
+            dist = math.sqrt(dx*dx + dy*dy)
+            hit = dist <= self.R
+            closer = self.LastDist is not None and dist < self.LastDist
+            self.LastDist = dist
         
-        ground = self.MissleY <= 0.0
+        ground = ground or self.MissleY <= 0.0
         
-        reward = 1.0 if hit else (-1.0 if ground else 0.0)
-        done = ground or hit
+        reward = 0.0
+        done = False
+        if ground:
+            reward = -5.0
+            done = True
+        elif hit:
+            reward = 5.0
+            done = True
+        else:
+            reward = 0.1 if closer else 0.0
+        self.Hit = self.Hit or hit
         return self.state_vector(), reward, done, {}
             
                 
@@ -95,30 +110,41 @@ class AirDefenseEnv(gym.Env):
         screen_height = 400
         
         if self.viewer is None:
-            from draw2d import Viewer, Frame, FilledPolygon
+            from draw2d import Viewer, Frame, FilledPolygon, Circle
             self.viewer = Viewer(screen_width, screen_height)
             self.outer_frame = self.viewer.frame(-self.D, self.D, 0, self.H0)
             
-            self.MissleFrame = Frame(scale = 0.05)
-            missle = FilledPolygon([(-0.1, -0.5), (0.1, -0.5), (0.0, 0.5)]).color(0.9, 0.3, 0.2).rotate_by(math.pi)
+            self.MissleFrame = Frame(scale = 0.1)
+            missle = FilledPolygon([(-0.1, -0.1), (0.1, -0.1), (0.0, 0.2)]).color(0.9, 0.3, 0.2).rotate_by(math.pi)
             self.MissleFrame.add(missle)
 
-            self.AMissleFrame = Frame(scale = 0.05)
-            amissle = FilledPolygon([(-0.1, -0.5), (0.1, -0.5), (0.0, 0.5)]).color(0.3, 0.9, 0.2)
+            self.AMissleFrame = Frame(scale = 0.1)
+            amissle = FilledPolygon([(-0.1, -0.1), (0.1, -0.1), (0.0, 0.2)]).color(0.3, 0.9, 0.2)
             self.AMissleFrame.add(amissle)
             self.AMissleFrame.hide()
             
             self.outer_frame.add(self.MissleFrame)
             self.outer_frame.add(self.AMissleFrame)
+            self.Bang = Circle(0.15).color(1.0, 1.0, 0.6)
             
+        self.MissleFrame.show()
         if self.AMissleX is not None:
             self.AMissleFrame.move_to(self.AMissleX, self.AMissleY)
             self.AMissleFrame.rotate_to(self.AMissleA)
             self.AMissleFrame.show()
-            
+        
+        if self.Hit:
+            self.AMissleFrame.hide()
+            self.MissleFrame.hide()
+            self.outer_frame.add(self.Bang, at=(self.AMissleX, self.AMissleY))
+            self.Bang.show()
+
         self.MissleFrame.move_to(self.MissleX, self.MissleY)
         self.MissleFrame.rotate_to(self.MissleA)
 
         time.sleep(0.1)
+        if self.Hit:
+            time.sleep(0.2)
 
-        return self.viewer.render()
+        self.viewer.render()
+        self.Bang.hide()
