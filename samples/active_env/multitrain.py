@@ -1,5 +1,4 @@
-from rlpy.gradnet.AC import Brain
-from rlpy import MultiTrainer_Chain, ActiveEnvironment, MultiAgent, MultiTrainer_Independent, MultiTrainer_Sync, Callback
+from rlpy import MultiTrainer_Chain, ActiveEnvironment, MultiAgent, MultiTrainer_Independent, MultiTrainer_Sync, Callback, BrainDiscrete
 import numpy as np, getopt, sys
 from util import Monitor, Smoothie
 import time
@@ -20,7 +19,7 @@ if "-a" in opts:
 
 np.set_printoptions(precision=4, suppress=True)
 
-cutoff = 10
+cutoff = None
 beta = 0.5
 gamma = 0.99
 comment = ""
@@ -29,8 +28,8 @@ max_steps_per_episode = 300
 port = 8989
 hidden = 300
 
-entropy_weight = 0.01
-critic_weight = 0.5
+entropy_weight = 0.001
+critic_weight = 0.9
 invalid_action_weight = 10.0
 cross_training = 0.0
 
@@ -65,13 +64,13 @@ else:
 optimizer = gradnet.optimizers.get_optimizer("adagrad", learning_rate=learning_rate) 
 
 if brain_mode == "share":
-    brain = Brain(env.observation_space, env.action_space, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
+    brain = BrainDiscrete(env.observation_space, env.action_space, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
         optimizer=optimizer, hidden=hidden,
         critic_weight=critic_weight, invalid_action_weight=invalid_action_weight)
     agents = [MultiAgent(brain) for _ in range(nagents)]
     trainer = MultiTrainer_Independent(env, agents)
 elif brain_mode in ("sync", "chain"):
-    brains = [Brain(env.observation_space, env.action_space, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
+    brains = [BrainDiscrete(env.observation_space.shape, env.action_space.n, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
         optimizer=optimizer, hidden=hidden,
         critic_weight=critic_weight, invalid_action_weight=invalid_action_weight) for _ in range(nagents)
     ]

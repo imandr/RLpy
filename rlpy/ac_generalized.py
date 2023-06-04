@@ -215,14 +215,15 @@ class Brain(object):
         return self.Model.get_weights()
         
     def set_weights(self, weights):
-        self.Model.set_weights(self, weights)
+        self.Model.set_weights(weights)
         
     def update_weights(self, source, alpha):
         # source can be either: Brain, Model, list of weights
         if isinstance(source, Brain):
             source = source.Model
+        source_weights = source.get_weights()
         old = self.Model.get_weights()
-        self.Model.update_weights(source, alpha)
+        self.Model.update_weights(source_weights, alpha)
         return old
                     
     def reset_episode(self):    # overridable
@@ -354,44 +355,6 @@ class Brain(object):
             probs = probs/np.sum(probs, axis=-1, keepdims=True)
         return probs
     
-    # overridable
-    def create_model(self, input_shape, num_actions, hidden):
-        model = self.default_model(input_shape, num_actions, hidden)
-        model   \
-            .add_loss(Loss(critic_loss, model["value"]),                   self.CriticWeight, name="critic_loss")  \
-            .add_loss(Loss(actor_loss, model["probs"], model["value"]),    self.ActorWeight, name="actor_loss")     \
-            .add_loss(Loss(entropy_loss, model["probs"]),                  self.EntropyWeight, name="entropy_loss") \
-            .add_loss(Loss(invalid_actions_loss, model["probs"]),          self.InvalidActionWeight, name="invalid_action_loss")   \
-            .compile(optimizer=self.Optimizer)
-        return model
-
-    # overridable
-    def default_model(self, input_shape, num_actions, hidden):
-        inp = Input(input_shape, name="input")
-        common1 = Dense(hidden, activation="relu", name="common1")(inp)
-        common = Dense(hidden//2, activation="relu", name="common")(common1)
-
-        #action1 = Dense(max(hidden//5, num_actions*5), activation="relu", name="action1")(common)
-        probs = Dense(num_actions, name="action", activation="softmax")(common)
-        
-        #critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
-        value = Dense(1, name="critic")(common)
-
-        model = Model([inp], [probs, value])
-        
-        model["value"] = value
-        model["probs"] = probs
-        
-        return model
-        
-    # overridable
-    def compile_losses_from_episode(self, losses):
-        return losses
-        
-    # overridable
-    def format_episode_history(self, history):
-        return history
-        
     def add_losses_from_episode(self, h):
 
         rewards = h["rewards"]
@@ -509,6 +472,87 @@ class Brain(object):
         #
         return total_steps, stats
 
+
+    # overridable
+    def create_model(self, input_shape, num_actions, hidden):
+        model = self.default_model(input_shape, num_actions, hidden)
+        model   \
+            .add_loss(Loss(critic_loss, model["value"]),                   self.CriticWeight, name="critic_loss")  \
+            .add_loss(Loss(actor_loss, model["probs"], model["value"]),    self.ActorWeight, name="actor_loss")     \
+            .add_loss(Loss(entropy_loss, model["probs"]),                  self.EntropyWeight, name="entropy_loss") \
+            .add_loss(Loss(invalid_actions_loss, model["probs"]),          self.InvalidActionWeight, name="invalid_action_loss")   \
+            .compile(optimizer=self.Optimizer)
+        return model
+
+    # 
+    # Overridables
+    #
+    
+    def policy(self, probs, training, valid_actions=None):
+        """Produce action based on the probabilities vector
+
+        Returns one of:
+            integer - action for discrete environments
+            ndarray - controls vector for continuous environments
+            (int, ndarray) - for mixed
+        """
+        raise NotImplementedError()
+    
+    def default_model(self, input_shape, num_actions, hidden):
+        inp = Input(input_shape, name="input")
+        common1 = Dense(hidden, activation="relu", name="common1")(inp)
+        common = Dense(hidden//2, activation="relu", name="common")(common1)
+
+        #action1 = Dense(max(hidden//5, num_actions*5), activation="relu", name="action1")(common)
+        probs = Dense(num_actions, name="action", activation="softmax")(common)
+        
+        #critic1 = Dense(hidden//5, name="critic1", activation="relu")(common)
+        value = Dense(1, name="critic")(common)
+
+        model = Model([inp], [probs, value])
+        
+        model["value"] = value
+        model["probs"] = probs
+        
+        return model
+        
+    def compile_losses_from_episode(self, losses):
+        return losses
+        
+    def format_episode_history(self, history):
+        return history
+
+    def evaluate_states(self, states):
+        """Evaluates multiple states
+        
+        Input:
+            states: list or ndarray of states
+        
+        Returns:
+            (action probabilities[], values[])
+            action probabilities: [Nstates, Nactions]
+            values: [NStates]
+        """
+        #print("Brain.evaluate_many: states:", type(states), len(states))
+        # transpose states
+        states = np.array(states)
+        probs, values = self.Model.compute(states)
+        return probs, values[:,0]
+
+    def evaluate_state(self, state):
+        """Evaluate single state.
+        
+        Returns:
+            tuple (action probabilities, value)
+        """
+        probs, values = self.evaluate_states([state])
+        return probs[0,:], values[0]
+
+    def evaluate_sequence(self, states):
+        """Evaluates sequence of states. Same as evaluate_states(), except for RNN-based models.
+        """
+        return self.evaluate_states(states)
+
 class BrainMixed(Brain):
     
     def __init__(self, observation_shape, nactions, ncontrols, **args):
@@ -597,6 +641,7 @@ class BrainMixed(Brain):
         else:
             return (action, controls)
 
+    """
     def evaluate_state(self, state):
         if not isinstance(state, (tuple, list)):
             state = [state]
@@ -615,7 +660,8 @@ class BrainMixed(Brain):
         states = np.array(states)
         probs, values = self.Model.compute(states)
         return probs, values[:,0]
-
+    """
+            
     def compile_losses_from_episode(self, losses):
         out = {}
         for name, value in losses.items():
@@ -641,14 +687,24 @@ class BrainMixed(Brain):
         return out
 
 class BrainDiscrete(BrainMixed):
-    
+
     def __init__(self, observation_space, nactions, **args):
         BrainMixed.__init__(self, observation_space, nactions, 0, **args)
 
+    def policy(self, action_probs, training, valid_actions=None):
+        if valid_actions is not None:
+            action_probs = self.valid_probs(action_probs, valid_actions)
+        return np.random.choice(self.NActions, p=action_probs)
+
 class BrainContinuous(BrainMixed):
-    
+
     def __init__(self, observation_space, ncontrols, **args):
         BrainMixed.__init__(self, observation_space, 0, ncontrols, **args)
+
+    def policy(self, probs, training, valid_actions=None):
+        means = probs[:self.NControls]
+        sigmas = probs[self.NControls:self.NControls*2]
+        return np.random.normal(means, sigmas)
 
 class RNNBrain(Brain):
     
@@ -700,20 +756,15 @@ class RNNBrain(Brain):
     
         return model
 
-    def evaluate_state(self, state):
-        if not isinstance(state, list):
-            state = [state]
-        state = [s[None, None, ...] for s in state]        # add minibatch and t dimension
-        #print("evaluate_single: state shapes:", [s.shape for s in state])
-        probs, values = self.Model.compute(state)        
-        return probs[0,0,:], values[0,0,0]
-
     def evaluate_states(self, states):
-        if not isinstance(states, list):
-            states = [states]
-        states = [s[None, ...] for s in states]        # add minibatch and t dimension
+        """Evaluates a set of out-of-sequence states
+        """
+        states = [s[None, ...] for s in states]        # add t dimension
         probs, values = self.Model.compute(states)          
+        return probs[:,0], values[:,0,0]
+
+    def evaluate_sequence(self, sequence):
+        probs, values = self.Model.compute([sequence])  # add minibatch dimension
         return probs[0], values[0,:,0]
-        
-        
+
         
