@@ -1,13 +1,16 @@
 from rlpy import MultiTrainer_Chain, ActiveEnvironment, MultiAgent, MultiTrainer_Independent, MultiTrainer_Sync, MultiTrainer_Ring, Callback, BrainDiscrete
 import numpy as np, getopt, sys
 from util import Monitor, Smoothie
-import time
+import time, os.path
 import gradnet
 
 
 opts, args = getopt.getopt(sys.argv[1:], "w:s:l:b:n:a:")
 opts = dict(opts)
-load_from = opts.get("-l") or opts.get("-w")
+load_from = opts.get("-l")
+if not load_from:
+    load_from = opts.get("-w")
+    if not os.path.isfile(load_from):   load_from=None
 save_to = opts.get("-s") or opts.get("-w")
 brain_mode = opts.get("-b", "chain")        # or chain or sync
 nagents = int(opts.get("-n", 1))
@@ -38,7 +41,7 @@ if env_name == "duel":
     duel = True
     hit_target = True
     compete = True
-    brain_mode = "chain"
+    brain_mode = "ring"
     env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
     nagents = 2
     alpha = 0.2
