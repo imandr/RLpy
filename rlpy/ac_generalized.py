@@ -217,20 +217,18 @@ class Brain(object):
     def set_weights(self, weights):
         self.Model.set_weights(weights)
         
-    def update_weights(self, source, alpha):
+    def update_weights(self, source, alpha = 1.0):
         # source can be either: Brain, Model, list of weights
         if isinstance(source, Brain):
             source = source.Model
-        source_weights = source.get_weights()
-        old = self.Model.get_weights()
-        self.Model.update_weights(source_weights, alpha)
-        return old
+        if not isinstance(source, list):
+            source = source.get_weights()
+        return self.Model.update_weights(source, alpha)
                     
     def reset_episode(self):    # overridable
         self.Model.reset_state()
         
     def evaluate_sequence(self, states):
-        print("Brain.evaluate_many: states:", type(states), len(states), states)
         probs, values = self.Model.compute(states)
         return values[:,0], probs
         
@@ -242,7 +240,7 @@ class Brain(object):
     def save(self, filename):
         self.Model.save_weights(filename)
         
-    def load(self, filename):
+    def load_weights(self, filename):
         self.Model.load_weights(filename)
         
     def serialize_weights(self):
@@ -343,8 +341,10 @@ class Brain(object):
             return self.calculate_future_returns_with_cutoff(rewards, probs, values)
         
         if self.Beta is None:
+            #print("calculate_future_returns: use entropy")
             value_weights = -np.sum(probs*np.log(np.clip(probs, 1e-5, None)), axis=-1)/math.log(self.NActions) # entropy for each step normalized to 1
         else:
+            #print("calculate_future_returns: use beta:", self.Beta)
             value_weights = np.ones((len(rewards),)) * self.Beta
         return _calc_retruns(self.Gamma, rewards, value_weights, values)
 
@@ -626,10 +626,15 @@ class BrainMixed(Brain):
         if self.NControls:
             means = probs[:self.NControls]
             sigmas = probs[self.NControls:self.NControls*2]
+            if training:
+                sigmas = sigmas/2
             controls = np.random.normal(means, sigmas)
         
         if self.NActions:
             action_probs = probs[self.NControls*2:]
+            if training:
+                action_probs = action_probs * action_probs
+                action_probs = action_probs / sum(action_probs)
             if valid_actions is not None:
                 action_probs = self.valid_probs(action_probs, valid_actions)
             action = np.random.choice(self.NActions, p=action_probs)
@@ -694,6 +699,9 @@ class BrainDiscrete(BrainMixed):
     def policy(self, action_probs, training, valid_actions=None):
         if valid_actions is not None:
             action_probs = self.valid_probs(action_probs, valid_actions)
+            if training:
+                action_probs = action_probs * action_probs
+                action_probs = action_probs / sum(action_probs)
         return np.random.choice(self.NActions, p=action_probs)
 
 class BrainContinuous(BrainMixed):
@@ -704,6 +712,8 @@ class BrainContinuous(BrainMixed):
     def policy(self, probs, training, valid_actions=None):
         means = probs[:self.NControls]
         sigmas = probs[self.NControls:self.NControls*2]
+        if training:
+            sigmas = sigmas/2
         return np.random.normal(means, sigmas)
 
 class RNNBrain(Brain):

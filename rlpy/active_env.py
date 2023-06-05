@@ -14,7 +14,7 @@ class ActiveEnvAgent(object):
         
     def update(self, observation=None, reward=0.0):
         # the environment may notify the agent about its changes by calling this method zero or more times between agent's actions
-        # the arguments, both optional, can be used to pass new obsservation and/or an incremental reward received by the agent
+        # the arguments, both optional, can be used to pass new observation and/or an incremental reward received by the agent
         pass
 
     def action(self, observation, valid_actions=None):
@@ -63,7 +63,7 @@ class ActiveEnvironment(object):
                     for a in agents:
                         a.done(None)
 
-        callbacks("active_env_end_episode", self, agents)
+        callbacks("active_env_end_episode", self, agents, training)
                 
     def reset(self, agents, training):        # overridable
         pass

@@ -51,6 +51,50 @@ class MultiTrainer_Chain(TrainerBase):
             done = done or target_reward is not None and maxrunning >= target_reward
         return maxrunning
         
+class MultiTrainer_Ring(TrainerBase):
+    
+    #
+    # Train only first agent and then propagate the changes to all other changes, applying alpha^n factor to the deltas
+    #
+    
+    def __init__(self, env, agents, replay_keep_ratio = 0.1, alpha = None, update_interval_episodes = 500):
+        TrainerBase.__init__(self, agents, replay_keep_ratio)
+        self.Env = env
+        self.HistoryBuffer = []        # {id(brain) -> [episode_history,...]}
+        self.Alpha = alpha or 0.5
+        self.NextUpdate = self.UpdateInterval = update_interval_episodes
+        self.Episodes = 0
+        
+    def train(self, target_reward=None, max_episodes=None, max_steps_per_episode=None, 
+            steps_per_batch=None, episodes_per_batch=30, callbacks=None):
+            
+        callbacks = CallbackList.convert(callbacks)            # if callbacks is a list, convert it to the Callbacks object
+            
+        done = False
+        episodes = 0
+        alpha = self.Alpha
+        while not done:
+            self.Env.run(self.Agents, callbacks)
+            a0 = self.Agents[0]
+            h = a0.episode_history()
+            #print("MultiTrainer_Chain.train(): episode rewards:", [a.EpisodeReward for a in self.Agents])
+            self.HistoryBuffer.append(h)
+            if len(self.HistoryBuffer) >= episodes_per_batch:
+                self.HistoryBuffer = self.train_on_buffer(self.HistoryBuffer, a0.Brain, episodes_per_batch, steps_per_batch, callbacks)
+            episodes += 1
+            self.Episodes += 1
+            if self.Episodes >= self.NextUpdate:
+                brevious_p = self.Agents[0].Brain.get_weights()
+                for agent in self.Agents[1:]:
+                    brevious_p = agent.Brain.update_weights(brevious_p, alpha)
+                self.Agents[0].Brain.update_weights(brevious_p, alpha)
+                self.NextUpdate += self.UpdateInterval
+            done = max_episodes is not None and episodes >= max_episodes
+            #print("MultiTrainer_Chain.train: episodes=", episodes, "  self.Episodes=", self.Episodes, "  max_episodes=", max_episodes)
+            maxrunning = max(a.RunningReward for a in self.Agents)
+            done = done or target_reward is not None and maxrunning >= target_reward
+        return maxrunning
+        
 class MultiTrainer_Independent(TrainerBase):
     
     #

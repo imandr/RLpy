@@ -23,6 +23,7 @@ class Tank(object):
         self.X = self.Y = None
         self.Angle = None
         self.Reward = 0.0       # accumulated since last action
+        self.Hit = False
 
     def random_init(self, x0, x1, y0, y1, margin):
         self.X = margin + random.random()*(x1-x0-margin*2)
@@ -42,19 +43,19 @@ class Tank(object):
 class TankDuelEnv(ActiveEnvironment):
     
     Speed = 0.01
-    RotSpeed = math.pi*2/6/math.pi      # ~ 2pi/10
-    TimeHorizon = 100
-    BaseReward = -0.01
-    FallReward = -1.0
+    RotSpeed = 5/180.0*math.pi
+    TimeHorizon = 200
+    BaseReward = 0.0
+    FallReward = -20.0
     MissReward = -0.1
-    HitReward = 10.0
+    HitReward = 20.0
     
     FIRE = 0
     FWD = 1
-    FFWD = 2
-    LEFT = 3
-    RIGHT = 4
-    NActions = 5
+    LEFT = 2
+    RIGHT = 3
+    NActions = 4
+    FFWD = 4
     BCK = 5
 
     NState = 9
@@ -162,9 +163,9 @@ class TankDuelEnv(ActiveEnvironment):
             pass
         else:
             if action in (self.FWD, self.FFWD, self.BCK):
-                d = self.Speed/2 if action == self.FWD else (
+                d = self.Speed if action == self.FWD else (
                     self.Speed*2 if action == self.FFWD else
-                    -self.Speed/2
+                    -self.Speed/2.1415
                 )
                 x = tank.X + math.cos(tank.Angle)*d
                 y = tank.Y + math.sin(tank.Angle)*d
@@ -178,13 +179,13 @@ class TankDuelEnv(ActiveEnvironment):
             elif action == self.FIRE:
                 tank.Fire = True
                 if self.Duel and tank.hit(other):
-                    print(f"hit {side} -> {other_side}")
+                    #print(f"hit {side} -> {other_side}")
                     other.Hit = True
                     reward = self.HitReward
                     other_reward = -self.HitReward
                     done = True
                 elif self.HitTarget and tank.hit(self.Target):
-                    print(f"hit {side} -> target")
+                    #print(f"hit {side} -> target")
                     reward = self.HitReward
                     self.Target.Hit = True
                     if self.Compete:
@@ -202,7 +203,7 @@ class TankDuelEnv(ActiveEnvironment):
                 
             agent.update(reward=reward)
             other_agent.update(reward=other_reward)
-                
+
         return done
            
     def render(self):
@@ -217,46 +218,58 @@ class TankDuelEnv(ActiveEnvironment):
                 (0.0, 0.5, 0.1),
                 (0, 0.1, 0.7)
             ]
+            self.StatusLabels = {}
             for i,tank in enumerate(self.Tanks):
+                agent = self.Agents[i]
                 sprite = Frame()
-                body = Polygon([(-0.02, -0.01), (0.02, 0.0), (-0.02, 0.01)])
                 color = self.TankColors[i]
-                sprite.add(body.color(*color))
+                body = Polygon([(-0.02, -0.01), (0.02, 0.0), (-0.02, 0.01)]).color(*color)
+                sprite.add(body)
                 beam = Line(end=(FireRange, 0)).color(1.0, 0.5, 0.0)
                 sprite.add(beam)
                 self.Frame.add(sprite)
+
+                status = Text("", anchor_x="center", anchor_y="top", size=12, color=(255,255,255))
+                self.StatusLabels[agent.ID] = status
+                self.Frame.add(status)
+                
                 self.TankSprites.append(sprite)
                 self.TankBeams.append(beam)
                 self.TankBodies.append(body)
 
-            self.ScoresText = Text("", anchor_x="left", size=8).color(0.5, 0.5, 0.5)
             self.TargetSprite = Circle(TargetSize, filled=True).color(0.4, 0.4, 0.3)
             self.Frame.add(self.TargetSprite)
 
         self.TargetSprite.move_to(self.Target.X, self.Target.Y)
         hit = False
         for i, (t, s, b, d) in enumerate(zip(self.Tanks, self.TankSprites, self.TankBeams, self.TankBodies)):
+            agent = self.Agents[i]
             s.move_to(t.X, t.Y)
             s.rotate_to(t.Angle)
-            b.hidden = not t.Fire
+            if t.Fire:
+                b.show()
+            else:
+                b.hide()
             if t.Hit:   
-                d.color(1,0.5,0.1)
+                d.color(1.0,0.5,0.1)
             else:
                 d.color(*self.TankColors[i])
             hit = hit or t.Hit
+            status = self.StatusLabels[agent.ID]
+            status.Text = "%.3f" % (agent.EpisodeReward,)
+            status.move_to(t.X, t.Y - 0.03)
         if self.Target.Hit:
             hit = True
             self.TargetSprite.color(1.0, 0.5, 0.3)
         else:
             self.TargetSprite.color(0.4, 0.4, 0.3)
-        self.ScoresText.Text = "--- hit ---" if hit else ""
             
         #self.ScoreText.Text = "r:%.3f R:%.3f %s" % ([], self.EpisodeReward, self.observation())
             
         self.Viewer.render()
-        
+        time.sleep(0.03)
         if hit:
-            time.sleep(0.5)
+            time.sleep(1.5)
         
 
 

@@ -1,4 +1,4 @@
-from rlpy import MultiTrainer_Chain, ActiveEnvironment, MultiAgent, MultiTrainer_Independent, MultiTrainer_Sync, Callback, BrainDiscrete
+from rlpy import MultiTrainer_Chain, ActiveEnvironment, MultiAgent, MultiTrainer_Independent, MultiTrainer_Sync, MultiTrainer_Ring, Callback, BrainDiscrete
 import numpy as np, getopt, sys
 from util import Monitor, Smoothie
 import time
@@ -26,7 +26,7 @@ comment = ""
 learning_rate = 0.01
 max_steps_per_episode = 300
 port = 8989
-hidden = 300
+hidden = 400
 
 entropy_weight = 0.001
 critic_weight = 0.9
@@ -41,6 +41,7 @@ if env_name == "duel":
     brain_mode = "chain"
     env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
     nagents = 2
+    alpha = 0.2
 elif env_name == "tanks_single":
     from tank_target_env import TankTargetEnv
     genv = TankTargetEnv()
@@ -64,13 +65,17 @@ else:
 optimizer = gradnet.optimizers.get_optimizer("adagrad", learning_rate=learning_rate) 
 
 if brain_mode == "share":
-    brain = BrainDiscrete(env.observation_space, env.action_space, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
+    brain = BrainDiscrete(env.observation_space, env.action_space, gamma=gamma, 
+        cutoff=cutoff, beta=beta,
+        learning_rate=learning_rate, entropy_weight=entropy_weight,
         optimizer=optimizer, hidden=hidden,
         critic_weight=critic_weight, invalid_action_weight=invalid_action_weight)
-    agents = [MultiAgent(brain) for _ in range(nagents)]
+    agents = [MultiAgent(brain, id=i) for i in range(nagents)]
     trainer = MultiTrainer_Independent(env, agents)
-elif brain_mode in ("sync", "chain"):
-    brains = [BrainDiscrete(env.observation_space.shape, env.action_space.n, gamma=gamma, cutoff=cutoff, learning_rate=learning_rate, entropy_weight=entropy_weight,
+elif brain_mode in ("sync", "chain", "ring"):
+    brains = [BrainDiscrete(env.observation_space.shape, env.action_space.n, gamma=gamma, 
+        cutoff=cutoff, beta=beta,
+        learning_rate=learning_rate, entropy_weight=entropy_weight,
         optimizer=optimizer, hidden=hidden,
         critic_weight=critic_weight, invalid_action_weight=invalid_action_weight) for _ in range(nagents)
     ]
@@ -78,9 +83,11 @@ elif brain_mode in ("sync", "chain"):
     for brain in brains:
         if not brain is b0:
             brain.set_weights(b0.get_weights())
-    agents = [MultiAgent(brain) for brain in brains]
+    agents = [MultiAgent(brain, id=i) for i, brain in enumerate(brains)]
     if brain_mode == "chain":
         trainer = MultiTrainer_Chain(env, agents, alpha=alpha)
+    elif brain_mode == "ring":
+        trainer = MultiTrainer_Ring(env, agents, alpha=alpha)
     else:
         trainer = MultiTrainer_Sync(env, agents, alpha=alpha)
         
@@ -185,16 +192,49 @@ class WeightSyncCallback(Callback):
     
     def agent_synced(self, agent, alpha):
         print("agent %d synced with alpha=%.3f" % (id(agent)%101, alpha))
+        
+class ProgressCallback(Callback):
+
+    def __init__(self):
+        Callback.__init__(self)
+        self.T = 0
+        self.WinnerRewardSmoothie = Smoothie(0.01)
+        self.LoserRewardSmoothie = Smoothie(0.01)
+        self.RewardDiffSmoothie = Smoothie(0.01)
+        self.PrintInterval = 100
+        self.NextPrint = 0
+    
+    def active_env_end_episode(self, env, agents, training):
+        if training:
+            winner = loser = agents[0].ID
+            winner_reward = loser_reward = agents[0].EpisodeReward
+            for agent in agents[1:]:
+                r = agent.EpisodeReward
+                if r > winner_reward:
+                    winner = agent.ID
+                    winner_reward = r
+                elif r < loser_reward:
+                    loser = agent.ID
+                    loser_reward = r
+            #print("winner/loser:", winner_reward, loser_reward)
+            _, winner_ma, _ = self.WinnerRewardSmoothie(winner_reward)
+            _, loser_ma, _ = self.LoserRewardSmoothie(loser_reward)
+            _, diff_ma, _ = self.RewardDiffSmoothie(winner_reward - loser_reward)
+            self.T += 1
+            if self.T >= self.NextPrint:
+                print("end of training episode", self.T, "    loser/winner reward MA: %.3f/%.3f" % (loser_ma, winner_ma), "  diff MA: %.3f" % (diff_ma,))
+                self.NextPrint = self.T + self.PrintInterval
 
 if load_from:
-    [b.load(load_from) for b in brains]
+    [b.load_weights(load_from) for b in brains]
     print("Model loaded from", load_from)
 
 mon_cb = UpdateMonitorCallback(monitor)
 save_cb =  SaveCallback(save_to)
+progress_cb = ProgressCallback()
 
 for epoch in range(1000):
-    trainer.train(max_episodes = 200, episodes_per_batch=5, callbacks=[mon_cb, save_cb, WeightSyncCallback()])
+    trainer.train(max_episodes = 1000, episodes_per_batch=10, callbacks=[mon_cb, save_cb, WeightSyncCallback(), progress_cb])
     print(f"====== end of training run. total episodes: {trainer.Episodes} ======")
     print("====== testing ======")
     scores = np.zeros((nagents,))
