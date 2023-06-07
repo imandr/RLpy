@@ -1,29 +1,7 @@
 from pythreader import Primitive, PyThread, synchronized, TaskQueue
 from webpie import WPApp, WPHandler
 import time, os.path, numpy as np, io, traceback, sys, json
-from socket import socket, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
-
-def to_bytes(s):
-    if isinstance(s, str):
-        s = s.encode("utf-8")
-    return s
-
-def to_str(s):
-    if isinstance(s, bytes):
-        s = s.decode("utf-8")
-    return s
-    
-def serialize(params):
-    if not params:
-        return b''
-    buf = io.BytesIO()
-    np.savez(buf, *params)
-    return buf.getvalue()
-
-def deserialize(file_or_bytes):
-    inp_file = io.BytesIO(file_or_bytes) if isinstance(file_or_bytes, bytes) else file_or_bytes
-    loaded = np.load(inp_file)
-    return [loaded[k] for k in loaded]
+from lib import to_str, to_bytes, serialize, deserialize
 
 class Model(Primitive):
     
@@ -57,18 +35,19 @@ class Model(Primitive):
             np.savez(self.SaveFile, *self.Params)
 
     @synchronized
-    def update(self, params):
-        alpha = self.Alpha
+    def update(self, params, alpha=None):
+        alpha = alpha or self.Alpha
         if isinstance(params, bytes):
             params = self.deserialize(params)
         self.LastActivity = time.time()
-        old_params = self.get_params()
+        old_params = self.get()
+        #print("Model.get: old_params:", old_params)
         if old_params is None:
             self.Params = params
         else:
+            self.Params = []
             for old, new in zip(old_params, params):
-                old += alpha * (new - old)
-        self.Params = old_params
+                self.Params.append(old + alpha * (new - old))
         return self.Params
     
     @synchronized
@@ -88,14 +67,14 @@ class Handler(WPHandler):
     
     Alpha = 0.2                 # for now
     
-    def model(self, request, model):
+    def model(self, request, model, alpha=None):
 
         if request.method == "GET":
             model = self.App.model(model, create=False)
             if model is None:
                 return 404, "Not found"
             else:
-                return 200, serialize(model.get_params())
+                return 200, serialize(model.get())
 
         elif request.method == "DELETE":
             model = self.App.model(model)
@@ -107,11 +86,20 @@ class Handler(WPHandler):
 
         elif request.method == "POST":
             model = self.App.model(model)
-            model.set(deserialize(request.body_file))
-            return 200, serialize(model.get_params())
+            model.set(deserialize(request.body))
+            return 200, serialize(model.get())
+            
+        elif request.method == "PUT":
+            if alpha is not None:
+                alpha = float(alpha)
+            model = self.App.model(model)
+            #print("handler: PUT: body:", request.body)
+            params = model.update(deserialize(request.body), alpha=alpha)
+            #print("handler: PUT: params:", params)
+            return 200, serialize(params) if params else b''
             
         else:
-            return 400
+            return 400, "Unsupported method"
     
     def models(self, request, relpath):
         return 200, json.dumps(list(self.App.models())), "text/json"
@@ -142,4 +130,4 @@ if __name__ == "__main__":
     alpha = float(opts.get("-a", 0.5))
     storage = opts.get("-s", "models")
     port = int(opts.get("-p", 8888))
-    App(storage, alpha).run_server(port)
+    App(storage, alpha).run_server(port, logging=True, log_file="-")
