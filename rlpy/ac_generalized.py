@@ -430,7 +430,6 @@ class Brain(object):
                 #for name, data in h.items():
                 #    print("   ", name, data)
             
-            
                 stats = self.add_losses_from_episode(h)
                 actor_losses += stats["actor_loss"]
                 invalid_action_losses += stats["invalid_action_loss"]
@@ -455,6 +454,7 @@ class Brain(object):
         self.Model.apply_deltas()
         
         stats = dict(
+            total_steps = total_steps,
             actor_loss = actor_losses/total_steps,
             critic_loss = critic_losses/total_steps,
             entropy_loss = entropy_losses/total_steps,

@@ -12,12 +12,13 @@ class MultiTrainer_Chain(TrainerBase):
     #
     
     def __init__(self, env, agents, replay_keep_ratio = 0.1, alpha = None, update_interval_episodes = 500):
-        TrainerBase.__init__(self, agents, replay_keep_ratio)
+        TrainerBase.__init__(self, replay_keep_ratio)
         self.Env = env
         self.HistoryBuffer = []        # {id(brain) -> [episode_history,...]}
         self.Alpha = alpha or 0.5
         self.NextUpdate = self.UpdateInterval = update_interval_episodes
         self.Episodes = 0
+        self.Agents = agents
         
     def train(self, target_reward=None, max_episodes=None, max_steps_per_episode=None, 
             steps_per_batch=None, episodes_per_batch=30, callbacks=None):
@@ -31,11 +32,14 @@ class MultiTrainer_Chain(TrainerBase):
             a0 = self.Agents[0]
             h = a0.episode_history()
             #print("MultiTrainer_Chain.train(): episode rewards:", [a.EpisodeReward for a in self.Agents])
-            self.HistoryBuffer.append(h)
-            if len(self.HistoryBuffer) >= episodes_per_batch:
-                self.HistoryBuffer = self.train_on_buffer(self.HistoryBuffer, a0.Brain, episodes_per_batch, steps_per_batch, callbacks)
-            episodes += 1
-            self.Episodes += 1
+            self.remember_episode(h)
+
+            episodes_trained, steps_trained = self.train_on_buffer(self.Agent, callbacks = callbacks, 
+                episodes_per_batch = episodes_per_batch, steps_per_batch = steps_per_batch, 
+                max_steps = max_steps, max_episodes = max_episodes)
+
+            episodes += episodes_trained
+            self.Episodes += episodes_trained
             if self.Episodes >= self.NextUpdate:
                 alpha = self.Alpha
                 b0 = self.Agents[0].Brain

@@ -409,7 +409,8 @@ class SaveCallback(Callback):
         self.BestReward = None
         self.SaveTo = save_to
 
-    def train_batch_end(self, brain, agent, batch_episodes, total_steps, losses):
+    def train_batch_end(self, agent, batch_episodes, total_steps, losses):
+        brain = agent.Brain
         running_reward = agent.RunningReward
         if self.BestReward is None:
             self.BestReward = running_reward
@@ -437,7 +438,7 @@ class UpdateMonitorCallback(Callback):
         self.AvgAdvantageMA = MovingAverage()
         self.AvgTestRewardMA = MovingAverage()
 
-    def train_batch_end(self, brain, agent, batch_episodes, steps, stats):
+    def train_batch_end(self, agent, batch_episodes, steps, stats):
         self.Episodes += batch_episodes
         self.Steps += steps
         running_reward = agent.RunningReward
@@ -471,7 +472,7 @@ class PrintCallback(Callback):
         self.NextReport = self.ReportInterval
         self.Episodes = 0
 
-    def train_batch_end(self, brain, agent, batch_episodes, total_steps, stats):
+    def train_batch_end(self, agent, batch_episodes, total_steps, stats):
         #print("End of batch. Episodes:", batch_episodes, "   steps:", total_steps)
         running_reward = agent.RunningReward
         self.Episodes += batch_episodes
@@ -494,7 +495,7 @@ class TestCallback(Callback):
         self.Render = render
         self.Monitor = monitor
         
-    def train_batch_end(self, brain, agent, batch_episodes, total_steps, stats):
+    def train_batch_end(self, agent, batch_episodes, total_steps, stats):
         sum_reward = 0
         for _ in range(self.TestEpisodes):
             agent.play_episode(env, max_steps=max_steps_per_episode, render=self.Render, training=False)
@@ -548,8 +549,8 @@ save_cb = SaveCallback(save_to)
 
 trainer = Trainer(agent, replay_ratio=0.1)
 
-episodes, running_reward, rewards_history = trainer.train(env, target, 
-    min_episodes=100, max_episodes=max_episodes, max_steps_per_episode=max_steps_per_episode, 
+episodes, running_reward, rewards_history = trainer.train(env, target_reward=target, 
+    max_episodes=max_episodes, max_steps_per_episode=max_steps_per_episode, 
     steps_per_batch=steps_per_batch, callbacks=[cb, save_cb, mcb, test_cb])
 
 print("--- training ended ---")

@@ -27,25 +27,33 @@ class CallbackList(object):
     # Sends event data to list of Callback objects and to list of callback functions
     #
     
-    def __init__(self, *callbacks):
-        self.Callbacks = list(callbacks)
-        
+    def __init__(self, *sources):
+        lst = []
+
+        for src in sources:
+            if src is not None:
+                if isinstance(src, CallbackList):
+                    lst += src.Callbacks
+                elif isinstance(src, (list, tuple)):
+                    lst += list(src)
+                elif isinstance(src, Callback):
+                    lst.append(src)
+                else:
+                    raise ValueError("Can not add %s to CallbackList" % (src,))
+
+        self.Callbacks = lst
+
     def add(self, *callbacks):
         self.Callbacks += list(callbacks)
-        
+
+    def __add__(self, other):
+        return CallbackList(self, other)
+
     def __call__(self, event, *params, **args):
         for cb in self.Callbacks:
             cb(event, *params, **args)
-            
+
     @staticmethod
     def convert(arg):
-        if isinstance(arg, CallbackList):
-            return arg
-        elif isinstance(arg, (list, tuple)):
-            return CallbackList(*arg)
-        elif arg is None:
-            return CallbackList()       # empty
-        else:
-            raise ValueError("Can not convert %s to CallbackList" % (arg,))
-
+        return CallbackList(arg)
 

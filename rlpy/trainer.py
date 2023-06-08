@@ -1,59 +1,128 @@
 import random
 from .util import CallbackList
 
+
+class ReplayBuffer(object):
+    
+    def __init__(self, keep_ratio=0.1):
+        self.KeepRatio = keep_ratio
+        self.Buffer = []
+
+    def make_batch(self, min_episodes=None, min_steps=None):
+        assert min_episodes or min_steps, "Either min_episodes or min_steps needs to be specified"
+        kept_episodes = []
+        batch = []
+        batch_steps = 0
+        for episode in self.Buffer:
+            nsteps = len(episode["actions"])
+            batch.append(episode)
+            batch_steps += nsteps
+            if random.random() < self.KeepRatio:
+                kept_episodes.append(episode)
+            if (min_steps is None or batch_steps >= min_steps) and (min_episodes is None or len(batch) >= min_episodes):
+                break
+        else:
+            return None         # not enough episodes
+        self.Buffer = self.Buffer[len(batch):] + kept_episodes
+        return batch
+        
+    def append(self, episode):
+        self.Buffer.append(episode)
+
+    def batches(self, min_episodes=None, min_steps=None):
+        while True:
+            batch = self.make_batch(min_episodes, min_steps)
+            if batch is None:
+                break
+            yield batch
+
 class TrainerBase(object):
     
-    def __init__(self, agents, keep_ratio):
-        self.Agents = agents
-        self.KeepRatio = keep_ratio
+    def __init__(self, keep_ratio=0.1):
+        self.ReplayBuffer = ReplayBuffer(keep_ratio)
+        
+    def remember_episode(self, episode):
+        self.ReplayBuffer.append(episode)
 
-    def train_on_buffer(self, buf, brain, episodes_per_batch, steps_per_batch, callbacks):
-        callbacks = CallbackList.convert(callbacks)
-        bufsize = len(buf)
+    def batches(self, min_episodes=None, min_steps=None):
+        return self.ReplayBuffer.batches(min_episodes, min_steps)
+        
+    def train_on_buffer(self, agent, callbacks = None, episodes_per_batch = None, steps_per_batch = None, max_steps = None, max_episodes = None):
+        if callbacks:
+            callbacks = CallbackList(callbacks)
+        brain = agent.Brain
         if episodes_per_batch is None and steps_per_batch is None:
             episodes_per_batch = 10
-        kept_episodes = []
-        #print("train_on_buffer: history length:", len(buf), "    episodes_per_batch:", episodes_per_batch, "  keep ratio:", self.KeepRatio)
-        total_steps = 0
-        while buf:
-            batch = []
-            batch_steps = 0
-            done = False
-            while buf and not done:
-                episode = buf.pop()
-                #print("TrainerBase.train_on_buffer: episode:", episode)
-                n = len(episode["actions"])
-                batch.append(episode)
-                
-                batch_steps += n
-                done = (
-                    (steps_per_batch is not None and batch_steps >= steps_per_batch)
-                    or (episodes_per_batch is not None and len(batch) >= episodes_per_batch)
-                )
-                
-            if done:
-                batch_steps, stats = brain.train_on_multi_episode_history(batch)
-                total_steps += batch_steps
-                #print("TrainerBase: train batch end")
-                callbacks("train_batch_end", brain, self.Agents, len(batch), batch_steps, stats)
-                for episode in batch:
-                    if random.random() < self.KeepRatio:
-                        kept_episodes.append(episode)
-            else:
-                # buf exhausted
-                assert not buf
-                kept_episodes += batch
-        #print("train_on_buffer: buffer size:", bufsize, "->", len(kept_episodes))
-        return kept_episodes 
+        steps_trained = 0
+        episodes_trained = 0
+        for batch in self.batches(episodes_per_batch, steps_per_batch):
+            batch_steps, stats = brain.train_on_multi_episode_history(batch)
+            steps_trained += batch_steps
+            episodes_trained += len(batch)
+            if callbacks:
+                callbacks("train_batch_end", agent, len(batch), batch_steps, stats)
+            if max_steps is not None and steps_trained >= max_steps \
+                    or max_episodes is not None and episodes_trained >= max_episodes:
+                break
+        return episodes_trained, steps_trained
+
 
 class Trainer(TrainerBase):
     
+    def __init__(self, agent, replay_ratio = 0.1):
+        TrainerBase.__init__(self, replay_ratio)
+        self.Agent = agent
+
+    def train(self, env, max_steps_per_episode=None,
+            target_reward=None, max_episodes=None, max_steps=None,
+            episodes_per_batch=None, steps_per_batch=None, 
+            callbacks=None
+        ):
+            
+        if target_reward is None and max_episodes is None and max_steps is None:
+            max_steps = 1000
+            
+        if episodes_per_batch is None and steps_per_batch is None:
+            steps_per_batch = 100
+            
+        callbacks = CallbackList.convert(callbacks)
+
+        self.HistoryBuffer = []
+        rewards_history = []
+
+        episodes = 0
+        total_steps = 0
+        brain = self.Agent.Brain
+        
+        while (max_episodes is None or episodes < max_episodes) \
+                and (max_steps is None or total_steps < max_steps) \
+                and (target_reward is None or self.Agent.RunningReward < target_reward):
+
+            episode_reward, history = self.Agent.play_episode(env, max_steps_per_episode, training=True, callbacks=callbacks)
+            if callbacks is not None:
+                callbacks("train_episode_end", self.Agent, episode_reward, history)
+            rewards_history.append(episode_reward)
+            self.remember_episode(history)
+            
+            episodes_trained, steps_trained = self.train_on_buffer(self.Agent, callbacks = callbacks, 
+                episodes_per_batch = episodes_per_batch, steps_per_batch = steps_per_batch, 
+                max_steps = max_steps, max_episodes = max_episodes)
+
+            episodes += episodes_trained
+            total_steps += steps_trained
+            
+            if max_steps is not None and total_steps >= max_steps \
+                    or max_episodes is not None and episodes >= max_episodes:
+                break
+
+        return episodes, self.Agent.RunningReward, rewards_history
+
+class DistributedTrainer(TrainerBase):
+    
     def __init__(self, agent, alpha=0.01, replay_ratio = 0.1):
-        TrainerBase.__init__(self, agent, alpha)
+        TrainerBase.__init__(self, replay_ratio)
         self.Agent = agent
         self.Alpha = alpha       # smooth constant for running reward
-        self.KeepRatio = replay_ratio
-        self.HistoryBuffer = []
         
     def train(self, env, target_reward=None, min_episodes=0, max_episodes=None, max_steps_per_episode=None,
             episodes_per_batch=None, steps_per_batch=None, callbacks=None):
@@ -78,6 +147,8 @@ class Trainer(TrainerBase):
                 break
                 
         return episodes, running_reward, rewards_history
+
+    
 
 if __name__ == "__main__":
     import gym
