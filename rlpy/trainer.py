@@ -36,6 +36,7 @@ class ReplayBuffer(object):
                 break
             yield batch
 
+
 class TrainerBase(object):
     
     def __init__(self, keep_ratio=0.1):
