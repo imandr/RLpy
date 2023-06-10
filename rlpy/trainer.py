@@ -117,38 +117,6 @@ class Trainer(TrainerBase):
 
         return episodes, self.Agent.RunningReward, rewards_history
 
-class DistributedTrainer(TrainerBase):
-    
-    def __init__(self, agent, alpha=0.01, replay_ratio = 0.1):
-        TrainerBase.__init__(self, replay_ratio)
-        self.Agent = agent
-        self.Alpha = alpha       # smooth constant for running reward
-        
-    def train(self, env, target_reward=None, min_episodes=0, max_episodes=None, max_steps_per_episode=None,
-            episodes_per_batch=None, steps_per_batch=None, callbacks=None):
-            
-        callbacks = CallbackList.convert(callbacks)
-
-        self.HistoryBuffer = []
-        rewards_history = []
-
-        episodes = 0
-        while max_episodes is None or episodes < max_episodes:
-            episode_reward, history = self.Agent.play_episode(env, max_steps_per_episode, training=True, callbacks=callbacks)
-            running_reward = self.Agent.RunningReward
-            self.HistoryBuffer.append(history)
-            episodes += 1
-            rewards_history.append(episode_reward)
-            
-            self.HistoryBuffer = self.train_on_buffer(self.HistoryBuffer, self.Agent.Brain, 
-                    episodes_per_batch, steps_per_batch, callbacks)   
-            
-            if episodes > min_episodes and (target_reward is not None and running_reward >= target_reward):
-                break
-                
-        return episodes, running_reward, rewards_history
-
-    
 
 if __name__ == "__main__":
     import gym

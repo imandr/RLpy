@@ -19,6 +19,7 @@ from gradnet.optimizers import get_optimizer
 
 Usage = """
 python train.py [-l <file>] [-s <file>] [-w <file>] <environment name>
+  -m <model server url>
   -s <file>    - save weights into the file
   -l <file>    - load weights from the file in the beginning
   -w <file>    - equivalent to -s <file> -l <file>
@@ -265,7 +266,7 @@ EnvParams = {
 
 np.set_printoptions(precision=4, suppress=True, linewidth=200)
 
-opts, args = getopt.getopt(sys.argv[1:], "w:s:l:")
+opts, args = getopt.getopt(sys.argv[1:], "w:s:l:m:")
 if not args:
     print(Usage)
     sys.exit(2)
@@ -274,6 +275,8 @@ opts = dict(opts)
 load_from = opts.get("-l") or opts.get("-w")
 save_to = opts.get("-s") or opts.get("-w")
 env_name = args[0]
+
+model_server_url = opts.get("-m")
 
 params = EnvParams["*"]
 params.update(EnvParams.get(env_name, {}))
@@ -504,7 +507,19 @@ class TestCallback(Callback):
             print("test reward:", test_reward)
         avg_test_reward = sum_reward/self.TestEpisodes
         print("Average test reward:", type(avg_test_reward), avg_test_reward)
+
+
+class SyncModelCallback(Callback):
     
+    def __init__(self, model_client, **args):
+        Callback.__init__(self, **args)
+        self.ModelClient = model_client
+    
+    def train_batch_end(self, agent, batch_eposides, batch_steps, stats):
+        brain = agent.Brain
+        brain.set_weights(self.ModelClient.update(brain.get_weights()))
+        print("weights synchronized")
+
 
 model = None
 if hasattr(env, "create_model"):
@@ -546,6 +561,7 @@ cb = PrintCallback()
 mcb = UpdateMonitorCallback(monitor)
 test_cb = TestCallback(monitor, test_interval=episodes_between_tests, test_episodes=test_episodes)
 save_cb = SaveCallback(save_to)
+sync_cb = None if 
 
 trainer = Trainer(agent, replay_ratio=0.1)
 
