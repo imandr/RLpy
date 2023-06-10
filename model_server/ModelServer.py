@@ -1,7 +1,8 @@
 from pythreader import Primitive, PyThread, synchronized, TaskQueue
 from webpie import WPApp, WPHandler
 import time, os.path, numpy as np, io, traceback, sys, json
-from lib import to_str, to_bytes, serialize, deserialize
+from lib import to_str, to_bytes
+from gradnet import serialize_weights, deserialize_weights
 
 class Model(Primitive):
     
@@ -38,7 +39,7 @@ class Model(Primitive):
     def update(self, params, alpha=None):
         alpha = alpha or self.Alpha
         if isinstance(params, bytes):
-            params = self.deserialize(params)
+            params = deserialize_weights(params)
         self.LastActivity = time.time()
         old_params = self.get()
         #print("Model.get: old_params:", old_params)
@@ -74,7 +75,7 @@ class Handler(WPHandler):
             if model is None:
                 return 404, "Not found"
             else:
-                return 200, serialize(model.get())
+                return 200, serialize_weights(model.get())
 
         elif request.method == "DELETE":
             model = self.App.model(model)
@@ -86,17 +87,17 @@ class Handler(WPHandler):
 
         elif request.method == "POST":
             model = self.App.model(model)
-            model.set(deserialize(request.body))
-            return 200, serialize(model.get())
+            model.set(deserialize_weights(request.body))
+            return 200, serialize_weights(model.get())
             
         elif request.method == "PUT":
             if alpha is not None:
                 alpha = float(alpha)
             model = self.App.model(model)
             #print("handler: PUT: body:", request.body)
-            params = model.update(deserialize(request.body), alpha=alpha)
+            params = model.update(deserialize_weights(request.body), alpha=alpha)
             #print("handler: PUT: params:", params)
-            return 200, serialize(params) if params else b''
+            return 200, serialize_weights(params) if params else b''
             
         else:
             return 400, "Unsupported method"
