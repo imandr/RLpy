@@ -11,7 +11,7 @@ from cluster_analysis_k import ClusterKEnv
 from sequence_env import SequenceEnv
 from single_agent_ttt_env import SingleAgentTicTacToeEnv
 from counter import CounterEnv
-from rlpy import BrainContinuous, BrainDiscrete, BrainMixed, Agent, Trainer, Callback, RNNBrain
+from rlpy import BrainContinuous, BrainDiscrete, BrainMixed, Agent, Trainer, Callback, RNNBrain, ModelClient
 from util import Monitor
 import numpy as np
 import sys, getopt, math
@@ -266,7 +266,7 @@ EnvParams = {
 
 np.set_printoptions(precision=4, suppress=True, linewidth=200)
 
-opts, args = getopt.getopt(sys.argv[1:], "w:s:l:m:")
+opts, args = getopt.getopt(sys.argv[1:], "w:s:l:m:r")
 if not args:
     print(Usage)
     sys.exit(2)
@@ -277,6 +277,13 @@ save_to = opts.get("-s") or opts.get("-w")
 env_name = args[0]
 
 model_server_url = opts.get("-m")
+model_client = None 
+if model_server_url:
+    model_client = ModelClient(env_name, model_server_url)
+    print("Model client created for:", model_server_url)
+    if "-r" in opts:
+        model_client.reset()
+        print("Model reset")
 
 params = EnvParams["*"]
 params.update(EnvParams.get(env_name, {}))
@@ -552,22 +559,28 @@ else:
         invalid_action_weight = invalid_action_weight
         )
 
-if load_from:
+if load_from and load_from != "__server":
     brain.load(load_from)
     print("Model weights loaded from", load_from)
+    
+if model_client is not None and load_from == "__server":
+    brain.set_weights(model_client.get())
 
 agent = Agent(brain)
 cb = PrintCallback()
 mcb = UpdateMonitorCallback(monitor)
 test_cb = TestCallback(monitor, test_interval=episodes_between_tests, test_episodes=test_episodes)
 save_cb = SaveCallback(save_to)
-sync_cb = None if 
+
+callbacks = [cb, save_cb, mcb, test_cb]
+if model_client is not None:
+    callbacks.append(SyncModelCallback(model_client))
 
 trainer = Trainer(agent, replay_ratio=0.1)
 
 episodes, running_reward, rewards_history = trainer.train(env, target_reward=target, 
     max_episodes=max_episodes, max_steps_per_episode=max_steps_per_episode, 
-    steps_per_batch=steps_per_batch, callbacks=[cb, save_cb, mcb, test_cb])
+    steps_per_batch=steps_per_batch, callbacks=callbacks)
 
 print("--- training ended ---")
 print("  episodes:      ", episodes)
