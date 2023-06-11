@@ -97,7 +97,7 @@ class Trainer(TrainerBase):
         
         while (max_episodes is None or episodes < max_episodes) \
                 and (max_steps is None or total_steps < max_steps) \
-                and (target_reward is None or self.Agent.RunningReward < target_reward):
+                and (target_reward is None or self.Agent.RunningReward is None or self.Agent.RunningReward < target_reward):
 
             episode_reward, history = self.Agent.play_episode(env, max_steps_per_episode, training=True, callbacks=callbacks)
             if callbacks is not None:

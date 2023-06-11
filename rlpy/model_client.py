@@ -22,8 +22,13 @@ class ModelClient(object):
         
     def get(self):
         response = requests.get(self.URLHead + "/model/" + self.ModelName)
-        response.raise_for_status()
-        return deserialize_weights(response.content)
+        if response.status_code == 404:
+            return None
+        if response.status_code // 100 != 2:
+            print(response)
+            print(response.text)
+            response.raise_for_status()
+        return deserialize_weights(response.content) if response.content else None
     
     def update(self, params):
         response = requests.put(self.URLHead + "/model/" + self.ModelName, data=serialize_weights(params))
@@ -31,8 +36,15 @@ class ModelClient(object):
             print(response)
             print(response.text)
             response.raise_for_status()
-        return deserialize_weights(response.content)
+        weights = deserialize_weights(response.content)
+        #print("ModelClient.update: deserialized:")
+        #for w in weights:
+        #    print(w.shape, w.data, w.data.readonly)
+        return weights
         
     def reset(self):
         response = requests.delete(self.URLHead + "/model/" + self.ModelName)
-        response.raise_for_status()
+        if response.status_code // 100 != 2:
+            print(response)
+            print(response.text)
+            response.raise_for_status()

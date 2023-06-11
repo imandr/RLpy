@@ -55,7 +55,8 @@ class Model(Primitive):
     def reset(self):
         last_params = self.Params
         self.Params = None
-        os.path.remove(self.SaveFile)
+        try:    os.remove(self.SaveFile)
+        except: pass
         return last_params
     
     @synchronized
@@ -75,7 +76,7 @@ class Handler(WPHandler):
             if model is None:
                 return 404, "Not found"
             else:
-                return 200, serialize_weights(model.get())
+                return 200, serialize_weights(model.get() or [])
 
         elif request.method == "DELETE":
             model = self.App.model(model)

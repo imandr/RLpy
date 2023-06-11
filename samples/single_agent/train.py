@@ -481,6 +481,8 @@ class PrintCallback(Callback):
         self.NextPlay = self.PlayInterval
         self.NextReport = self.ReportInterval
         self.Episodes = 0
+        self.LastEpisodeRewards = [None]*10
+        self.EpisodeRewardMA = None
 
     def train_batch_end(self, agent, batch_episodes, total_steps, stats):
         #print("End of batch. Episodes:", batch_episodes, "   steps:", total_steps)
@@ -494,9 +496,19 @@ class PrintCallback(Callback):
                             stats["average_value"], stats["average_return"], stats["entropy"]#, stats["average_advantage"]
                         )
             )
+            if self.EpisodeRewardMA is not None:
+                print("    Average reward for last 10 train episodes:", self.EpisodeRewardMA)
             #print("   rms(grads):", [math.sqrt(g2) for g2 in stats["average_grad_squared"]])
             self.NextReport += self.ReportInterval
-            
+    
+    def train_episode_end(self, agent, episode_reward, episode_history):
+        rewards = self.LastEpisodeRewards
+        rewards.insert(0, episode_reward)
+        rewards.pop()
+        if not None in rewards:
+            self.EpisodeRewardMA = sum(rewards)/len(rewards)
+        
+        
 class TestCallback(Callback):
     
     def __init__(self, monitor=None, test_interval = 1000, test_episodes = 10, render=True):
@@ -574,7 +586,13 @@ save_cb = SaveCallback(save_to)
 
 callbacks = [cb, save_cb, mcb, test_cb]
 if model_client is not None:
-    callbacks.append(SyncModelCallback(model_client))
+    callbacks.append(SyncModelCallback(model_client, fire_interval=100))
+    weights = model_client.get()
+    if weights:
+        agent.Brain.set_weights(weights)
+        print("Weights loaded from the model server")
+    else:
+        print("Weights not found")
 
 trainer = Trainer(agent, replay_ratio=0.1)
 
