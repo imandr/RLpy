@@ -151,7 +151,7 @@ class SaveCallback(Callback):
         self.SaveTo = save_to
         self.Alpha = 0.1
         
-    def train_batch_end(self, brain, agents, batch_episodes, total_steps, avg_losses):
+    def train_batch_end(self, agent, batch_episodes, total_steps, avg_losses):
         entropy = -avg_losses["entropy"]
         if self.BestEntropy is None:
             self.BestEntropy = self.EntropyMA = entropy
@@ -175,10 +175,8 @@ class UpdateMonitorCallback(Callback):
         self.CriticSmoothie = Smoothie(0.01)
         self.RunningScoreSmoothie = Smoothie(0.01)
 
-    def train_batch_end(self, brain, agents, batch_episodes, total_steps, avg_losses):
+    def train_batch_end(self, agent, batch_episodes, total_steps, avg_losses):
         self.Episodes += batch_episodes
-        for a in agents:
-            rs_low, rs_ma, rs_high = self.RunningScoreSmoothie(a.RunningReward)
         entropy = -avg_losses["entropy"]
         elow, ema, ehigh = self.EntropySmoothie(entropy)
         _, clossma, _ = self.CriticSmoothie(avg_losses["critic_loss"])
@@ -189,8 +187,6 @@ class UpdateMonitorCallback(Callback):
                 "entropy moving average":  -ema,
                 #"invalid action loss":  avg_losses["invalid_action"]
             }
-        for i, agent in enumerate(agents):
-            data[f"running reward {i}"] = agent.RunningReward
         
         self.Monitor.add(self.Episodes, data)
 

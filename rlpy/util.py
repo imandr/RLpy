@@ -20,6 +20,23 @@ class Callback(object):
         self.FireLevel -= 1.0
         if self.FireInterval is not None:
             self.NextFire += self.FireInterval
+            
+    #
+    # Optional methods:
+    #
+
+    def train_episode_end(self, agent, episode_reward, episode_history):
+        pass
+        
+    def train_batch_end(self, agent, n_episodes, total_steps, stats):
+        pass
+            
+    # 
+    # Active env only:
+    #
+    def active_env_episode_end(self, agents):
+        # assume each agent has agent.EpisodeReward and agent.episode_history()
+        pass
 
 class CallbackList(object):
     

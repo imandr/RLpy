@@ -48,7 +48,8 @@ class TrainerBase(object):
     def batches(self, min_episodes=None, min_steps=None):
         return self.ReplayBuffer.batches(min_episodes, min_steps)
         
-    def train_on_buffer(self, agent, callbacks = None, episodes_per_batch = None, steps_per_batch = None, max_steps = None, max_episodes = None):
+    def train_on_buffer(self, agent, replay_buffer=None, callbacks = None, episodes_per_batch = None, steps_per_batch = None, max_steps = None, max_episodes = None):
+        replay_buffer = replay_buffer or self.ReplayBuffer
         if callbacks:
             callbacks = CallbackList(callbacks)
         brain = agent.Brain
@@ -56,7 +57,7 @@ class TrainerBase(object):
             episodes_per_batch = 10
         steps_trained = 0
         episodes_trained = 0
-        for batch in self.batches(episodes_per_batch, steps_per_batch):
+        for batch in replay_buffer.batches(episodes_per_batch, steps_per_batch):
             batch_steps, stats = brain.train_on_multi_episode_history(batch)
             steps_trained += batch_steps
             episodes_trained += len(batch)
