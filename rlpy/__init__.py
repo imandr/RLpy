@@ -4,4 +4,3 @@ from .multitrainer import MultiTrainer_Chain, MultiTrainer_Independent, MultiTra
 from .trainer import TrainerBase, Trainer
 from .util import Callback
 from .ac_generalized import BrainContinuous, BrainDiscrete, BrainMixed, RNNBrain
-from .model_client import ModelClient

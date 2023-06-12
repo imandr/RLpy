@@ -11,11 +11,12 @@ from cluster_analysis_k import ClusterKEnv
 from sequence_env import SequenceEnv
 from single_agent_ttt_env import SingleAgentTicTacToeEnv
 from counter import CounterEnv
-from rlpy import BrainContinuous, BrainDiscrete, BrainMixed, Agent, Trainer, Callback, RNNBrain, ModelClient
+from rlpy import BrainContinuous, BrainDiscrete, BrainMixed, Agent, Trainer, Callback, RNNBrain
 from util import Monitor
 import numpy as np
 import sys, getopt, math
 from gradnet.optimizers import get_optimizer
+from gradnet import ModelClient
 
 Usage = """
 python train.py [-l <file>] [-s <file>] [-w <file>] <environment name>
