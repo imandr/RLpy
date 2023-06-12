@@ -1,4 +1,3 @@
-import tensorflow as tf
 import numpy as np
 from .agent import MultiAgent
 from .trainer import TrainerBase
@@ -62,7 +61,8 @@ class MultiTrainer_Ring(TrainerBase):
     #
     
     def __init__(self, env, agents, replay_keep_ratio = 0.1, alpha = None, update_interval_episodes = 500):
-        TrainerBase.__init__(self, agents, replay_keep_ratio)
+        TrainerBase.__init__(self, replay_keep_ratio)
+        self.Agents = agents
         self.Env = env
         self.HistoryBuffer = []        # {id(brain) -> [episode_history,...]}
         self.Alpha = alpha or 0.5
@@ -106,11 +106,12 @@ class MultiTrainer_Independent(TrainerBase):
     #
     
     def __init__(self, env, agents, replay_keep_ratio = 0.1, alpha = 0.9, update_interval_episodes = 100):
-        TrainerBase.__init__(self, agents, replay_keep_ratio)
+        TrainerBase.__init__(self, replay_keep_ratio)
         self.Env = env
         self.HistoryBuffers = {}        # {id(brain) -> [episode_history,...]}
         self.NextUpdate = self.UpdateInterval = update_interval_episodes
         self.Episodes = 0
+        self.Agents = agents
         
     def train(self, target_reward=None, max_episodes=None, max_steps_per_episode=None, 
             steps_per_batch=None, episodes_per_batch=30, callbacks=None):
@@ -147,13 +148,15 @@ class MultiTrainer_Sync(TrainerBase):
     #
     
     def __init__(self, env, agents, replay_keep_ratio = 0.1, alpha = None, sync_frequency = 0.02):
-        TrainerBase.__init__(self, agents, replay_keep_ratio)
+        TrainerBase.__init__(self, replay_keep_ratio)
         self.Env = env
         self.HistoryBuffers = {}        # {id(brain) -> [episode_history,...]}
         self.Alpha = alpha or 0.5
         self.Episodes = 0
         self.WeightsCentral = None
         self.SyncFrequency = sync_frequency
+        self.Agents = agents
+        
         
     def update_central(self, brain, alpha):
         if self.WeightsCentral is None:

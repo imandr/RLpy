@@ -10,7 +10,10 @@ opts = dict(opts)
 load_from = opts.get("-l")
 if not load_from:
     load_from = opts.get("-w")
-    if not os.path.isfile(load_from):   load_from=None
+if load_from:
+    if not os.path.isfile(load_from):
+        print(f"File to load the model weights from {load_from} not found")
+        load_from=None
 save_to = opts.get("-s") or opts.get("-w")
 brain_mode = opts.get("-b", "chain")        # or chain or sync
 nagents = int(opts.get("-n", 1))
