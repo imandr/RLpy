@@ -3,9 +3,9 @@ import numpy as np, getopt, sys
 from util import Monitor, Smoothie
 import time, os.path
 import gradnet
+from gradnet import ModelClient
 
-
-opts, args = getopt.getopt(sys.argv[1:], "w:s:l:b:n:a:")
+opts, args = getopt.getopt(sys.argv[1:], "w:s:l:b:n:a:m:r")
 opts = dict(opts)
 load_from = opts.get("-l")
 if not load_from:
@@ -17,11 +17,22 @@ if load_from:
 save_to = opts.get("-s") or opts.get("-w")
 brain_mode = opts.get("-b", "chain")        # or chain or sync
 nagents = int(opts.get("-n", 1))
+do_render = "-q" not in opts
+
 env_name = args[0]
 
 alpha = None
 if "-a" in opts:
     alpha = float(opts["-a"])
+
+model_server_url = opts.get("-m")
+model_client = None 
+if model_server_url:
+    model_client = ModelClient(env_name, model_server_url)
+    print("Model client created for:", model_server_url)
+    if "-r" in opts:
+        model_client.reset()
+        print("Model reset")
 
 np.set_printoptions(precision=4, suppress=True)
 
@@ -76,6 +87,7 @@ if brain_mode == "share":
         learning_rate=learning_rate, entropy_weight=entropy_weight,
         optimizer=optimizer, hidden=hidden,
         critic_weight=critic_weight, invalid_action_weight=invalid_action_weight)
+    brains = [brain]
     agents = [MultiAgent(brain, id=i) for i in range(nagents)]
     trainer = MultiTrainer_Independent(env, agents)
 elif brain_mode in ("sync", "chain", "ring"):
@@ -227,21 +239,47 @@ class ProgressCallback(Callback):
                 print("end of training episode", self.T, "    loser/winner reward MA: %.3f/%.3f" % (loser_ma, winner_ma), "  diff MA: %.3f" % (diff_ma,))
                 self.NextPrint = self.T + self.PrintInterval
 
+class SyncModelCallback(Callback):
+    
+    def __init__(self, model_client, **args):
+        Callback.__init__(self, **args)
+        self.ModelClient = model_client
+    
+    def train_batch_end(self, agent, batch_eposides, batch_steps, stats):
+        brain = agent.Brain
+        brain.set_weights(self.ModelClient.update(brain.get_weights()))
+        print("weights synchronized")
+
+
+
+
 if load_from:
     [b.load_weights(load_from) for b in brains]
     print("Model loaded from", load_from)
+
 
 mon_cb = UpdateMonitorCallback(monitor)
 save_cb =  SaveCallback(save_to)
 progress_cb = ProgressCallback()
 
+callbacks = [mon_cb, save_cb, WeightSyncCallback(), progress_cb]
+
+if model_client is not None:
+    callbacks.append(SyncModelCallback(model_client, fire_interval=50))
+    weights = model_client.get()
+    if weights:
+        [b.set_weights(weights) for b in brains]
+        print("Weights loaded from the model server")
+    else:
+        print("Weights not found")
+
 for epoch in range(1000):
-    trainer.train(max_episodes = 1000, episodes_per_batch=10, callbacks=[mon_cb, save_cb, WeightSyncCallback(), progress_cb])
+    trainer.train(max_episodes = 1000, episodes_per_batch=10, callbacks=callbacks)
     print(f"====== end of training run. total episodes: {trainer.Episodes} ======")
     print("====== testing ======")
     scores = np.zeros((nagents,))
     for episode in range(5):
-        env.run(trainer.Agents, training=False, render=True)
+        env.run(trainer.Agents, training=False, render=do_render)
         winner = np.argmax([a.EpisodeReward for a in trainer.Agents])
         loser = np.argmin([a.EpisodeReward for a in trainer.Agents])
         if trainer.Agents[winner].EpisodeReward > trainer.Agents[loser].EpisodeReward:
