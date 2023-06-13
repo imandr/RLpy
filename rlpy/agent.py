@@ -109,6 +109,7 @@ class Agent(object):
             rewards = np.array(rewards_history),
             observations = observation_history,
             #actions = np.array(actions_history, dtype=np.int),
+            metadata = meta_history,
             probs = np.array(probs_history),
             valid_actions = np.array(valids_history) if valids_history else None,
             meta = meta_history,
@@ -158,6 +159,7 @@ class MultiAgent(object):
         self.Values = []                # values and probs used to calculate action
         self.Probs = []                 # values and probs used to calculate action
         self.ValidActions = []
+        self.Metadata = []
         self.Done = False
         self.LastAction = None
         #print("Agent[%d].reset()" % (id(self)%100,))

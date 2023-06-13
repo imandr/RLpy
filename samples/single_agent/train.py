@@ -179,15 +179,14 @@ EnvParams = {
         "cutoff":           100
     },
     "blackjack":  {
-        "rnn":  True,
-        "gamma":    1.0,
-        "target":   21.0,
-        "max_steps_per_episode":    200,
+        "rnn":  False,
+        "gamma":    0.99,
+        "target":   10.0,
+        "max_steps_per_episode":    500,
         "learning_rate":    0.01,
-        "critic_weight":    1.0,
-        "entropy_weight":   0.001,
-        "actor_weight":     1.0,
-        "cutoff":           100,
+        "critic_weight":    0.5,
+        "entropy_weight":   0.0001,
+        "actor_weight":    1.0,
         "hidden":           200
     },
     "game21":  {
@@ -508,6 +507,12 @@ class PrintCallback(Callback):
         rewards.pop()
         if not None in rewards:
             self.EpisodeRewardMA = sum(rewards)/len(rewards)
+        if False:
+            print("---- episode history ----")
+            for obs, action, reward, meta in zip(
+                    episode_history["observations"], episode_history["actions"], 
+                    episode_history["rewards"], episode_history["metadata"]):
+                print(obs, "a=", action, "r=", reward, "m=", meta)
         
         
 class TestCallback(Callback):

@@ -10,53 +10,55 @@ import random
 class SimpleBlackJackEnv(gym.Env):
     
     CardValues = [2,3,4,5,6,7,8,9,10,10,10,10,11]
-    NSuits = 4
     NCards = len(CardValues)
-    DeckSize = NSuits * NCards
-    CardVectors = np.array(list(np.eye(DeckSize)) + [np.zeros((DeckSize,))])        # CardVectors[-1] = all zeros
+    CardVectors = np.array(list(np.eye(NCards)) + [np.zeros((NCards,))])        # CardVectors[-1] = all zeros
+    NSuits = 4
     Ace = NCards-1
-    NObservation = DeckSize
+    NObservation = NCards*2
+
 
     STAY=0
     HIT=1
-    DOUBLE=2        # not used yet
+    DOUBLE=2
 
     NActions = 2
     
     def __init__(self):
         self.action_space = spaces.Discrete(self.NActions)
-        low = -np.ones((self.NObservation,))*30
+        low = np.zeros((self.NObservation))
         high = np.ones((self.NObservation,))*30
         self.observation_space = spaces.Box(low, high, dtype=np.float32)
         
     def deal(self, hand_value):
         card_index = self.Deck.pop()
-        card_value = self.CardValues[card_index % len(self.CardValues)]
+        card_value = self.CardValues[card_index]
         
         if (card_value == 11) and (card_value + hand_value > 21):
             card_value = 1      # Ace can be converted to value = 1
         return card_index, float(hand_value + card_value)
         
     def reset(self):
-        self.Deck = list(range(self.NCards*self.NSuits))
-        self.DeckPlayed = np.zeros((self.DeckSize,), dtype=np.float)
+        self.Deck = list(range(self.NCards))*self.NSuits
         random.shuffle(self.Deck)
         self.Double = 0
         self.Reward = 0
         self.Done = False
+        self.DealerStays = False
         self.PlayerStays = False
         self.DealerCard, self.DealerValue = self.deal(0)
         self.PlayerCard, self.PlayerValue = self.deal(0)
-        self.DeckPlayed[self.DealerCard] = -1.0
-        self.DeckPlayed[self.PlayerCard] = 1.0
-        #print("Env.reset: player:", self.PlayerCard, "  dealer:", self.DealerCard)
-        return self.observation(), {"values":np.array([self.PlayerValue, self.DealerValue])}
-        
-    def dealer_stays(self):
-        return self.DealerValue >= 17
+        return self.observation(), {"valid_actions":np.array([0., 1.])}     # player can not stay after first card
         
     def observation(self):
-        return self.DeckPlayed.copy()
+        obs = np.zeros((self.NObservation,))
+        if self.PlayerCard is not None:
+            obs[:self.NCards] = self.CardVectors[self.PlayerCard]
+        if self.DealerCard is not None:
+            obs[self.NCards:self.NCards*2] = self.CardVectors[self.DealerCard]
+        #obs[self.NCards*2] = self.Double
+        #obs[self.NCards*2] = self.PlayerValue/21
+        #obs[self.NCards*2+1] = self.DealerValue/21
+        return obs
         
     def step(self, action):
         self.Action = action
@@ -71,30 +73,38 @@ class SimpleBlackJackEnv(gym.Env):
         if action == self.DOUBLE:
             self.Double = 1
         else:
-            self.PlayerStays = self.PlayerStays or action == self.STAY
             if not self.PlayerStays:
-                self.PlayerCard, self.PlayerValue = self.deal(self.PlayerValue)
-                if self.PlayerValue > 21:
-                    reward = -10.0
-                    done = True
+                #
+                # Player action
+                #
+                if action == 0:
+                    self.PlayerStays = True
+                else:
+                    self.PlayerCard, self.PlayerValue = self.deal(self.PlayerValue)
+                    if self.PlayerValue > 21:
+                        reward = -1.0
+                        done = True
 
             if not done:
+                if self.DealerValue >= 17:
+                # dealer stays
+                    self.DealerStays = True
 
-                if not done and not self.dealer_stays():
+                if not done and not self.DealerStays:
                     self.DealerCard, self.DealerValue = self.deal(self.DealerValue)
                     if self.DealerValue > 21:
                         done = True
-                        reward = 10.0
+                        reward = 1.0
         
             if not done:
-                if self.dealer_stays() and self.PlayerStays:
+                if self.DealerStays and self.PlayerStays:
                     done = True
                     if self.PlayerValue == self.DealerValue:
                         reward = 0.0
                     elif self.PlayerValue > self.DealerValue:
-                        reward = 10.0
+                        reward = 1.0
                     else:
-                        reward = -10.0
+                        reward = -1.0
                     
             # check if anyone has a blackjack
             if not done:
@@ -103,17 +113,14 @@ class SimpleBlackJackEnv(gym.Env):
                 if player_blackjack or dealer_blackjack:
                     done = True
                     if player_blackjack:
-                        reward = 10.0
+                        reward = 1.0
                     else:
-                        reward = -10.0
-        if self.DealerCard is not None: self.DeckPlayed[self.DealerCard] = -1.0
-        if self.PlayerCard is not None: self.DeckPlayed[self.PlayerCard] = 1.0
+                        reward = -1.0
+        
         self.Reward = reward
         self.Done = done
-        return self.observation(), reward*(1+self.Double), done, {
-                "values":np.array([self.PlayerValue, self.DealerValue]),
-                "cards":[self.PlayerCard, self.DealerCard]
-            }
+        valid = [1.0, float(not self.PlayerStays)]
+        return self.observation(), reward*(1+self.Double), done, {"valid_actions":np.array(valid)}
         
     def render(self):
         pass

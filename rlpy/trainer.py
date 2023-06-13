@@ -68,7 +68,6 @@ class TrainerBase(object):
                 break
         return episodes_trained, steps_trained
 
-
 class Trainer(TrainerBase):
     
     def __init__(self, agent, replay_ratio = 0.1):
