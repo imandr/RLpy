@@ -55,8 +55,18 @@ if env_name == "duel":
     duel = True
     hit_target = True
     compete = True
-    brain_mode = "ring"
+    brain_mode = "chain"
     env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
+    nagents = 2
+    alpha = 0.2
+    hidden = 500
+elif env_name == "duel_projectile":
+    from tank_duel_projectile import TankDuelProjectileEnv
+    duel = True
+    hit_target = True
+    compete = True
+    brain_mode = "chain"
+    env = TankDuelProjectileEnv(duel=duel, target=hit_target, compete=compete)
     nagents = 2
     alpha = 0.2
 elif env_name == "tanks_single":

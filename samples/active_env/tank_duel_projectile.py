@@ -2,7 +2,7 @@ import random
 import numpy as np
 import math, time
 from gym import spaces
-from draw2d import Viewer, Frame, Line, Polygon, Circle, Text
+from draw2d import Viewer, Frame, Line, Polygon, Circle, Text, Rectangle
 from rlpy import ActiveEnvironment
 
 FireRange = 0.2
@@ -14,19 +14,65 @@ Y0 = 0.0
 Y1 = 1.0
 Margin = 0.1
 
+FIRE = 0
+FWD = 1
+LEFT = 2
+RIGHT = 3
+FFWD = 4
+BCK = 5
+
+
+class Projectile(object):
+    
+    Velocity = 0.1
+
+    def __init__(self, x, y, a):
+        self.X = x
+        self.Y = y
+        self.Angle = a
+
+    def move(self, my_tank, tanks):
+        dx = self.Velocity * math.cos(self.Angle)
+        dy = self.Velocity * math.sin(self.Angle)
+        hit_t = None
+        hit_tank = None
+        hit_point = None
+        for tank in tanks:
+            if tank is not my_tank:
+                dt_x, dt_y = tank.X - self.X, tank.Y - self.Y
+                t = (dt_x*dx + dt_y*dy)/(dx*dx + dy*dy)
+                t = min(max(t, 0.0), 1.0)
+                hit_x, hit_y = self.X + dx*t, self.Y + dy*t
+                distance = math.sqrt((hit_x - tank.X)**2 + (hit_y - tank.Y)**2)
+                if distance < TargetSize:
+                    if hit_t is None or hit_t > t:
+                        hit_t = t
+                        hit_tank = tank
+                        hit_point = (t*dx, t*dy) 
+        if hit_tank:
+            self.X, self.Y = hit_point
+        else:
+            self.X += dx
+            self.Y += dy
+        return hit_tank
+    
+    def out_of_bounds(self):
+        return self.X > X1 or self.X < X0 or self.Y > Y1 or self.Y < Y0
 
 class Tank(object):
 
     ActionCapacity = 2
     ProjectileVelocity = 1.0
+    Speed = 0.01
+    RotSpeed = 5/180.0*math.pi
     
     def __init__(self):
         self.X = self.Y = None
         self.Angle = None
         self.Reward = 0.0       # accumulated since last action
         self.Hit = False
-        self.PP = None          # projectile pisition
-        self.PA = None          # and velocity
+        self.Projectile = None
+        self.FellOff = False
 
     def random_init(self, x0, x1, y0, y1, margin):
         self.X = margin + random.random()*(x1-x0-margin*2)
@@ -35,76 +81,53 @@ class Tank(object):
         self.Reward = 0.0
         self.Fire = self.Hit = False
         
-    def hit(self, other):
-        dx = other.X - self.X
-        dy = other.Y - self.Y
-        a = math.atan2(dy, dx)
-        distance = math.sqrt(dx*dx + dy*dy)
-        delta = distance * math.sin(abs(a-self.Angle))
-        return abs(self.Angle - a) < math.pi/4 and delta < TargetSize and distance < FireRange + TargetSize
-        
     def fire(self):
-        if self.PP is not None:
-            self.PP = (self.X, self.Y)
-            self.PA = self.Angle
-            
-    def projectile_hit(self, dx, dy, target):
-        if self.PP is None:
-            return None
-        start_x, start_y = self.PP
-        dt_x, dt_y = target[0] - start_x, target[1] - start_y
-        t = (dt_x*dx + dt_y*dy)/(dx*dx + dy*dy)
-        if t > 1.0:
-            t = 1.0
-        if t < 0.0:
-            t = 0.0
-        return t, start_x + dx*t, start_y + dy*t
+        if self.Projectile is None:
+            self.Projectile = Projectile(self.X, self.Y, self.Angle)
+            self.Fired = True
 
-    def move_projectile(self, dt, target, enemy):
-        if self.PP is None:
-            return False, False
-        dx = self.ProjectileVelocity * math.cos(self.PA)
-        dy = self.ProjectileVelocity * math.sin(self.PA)
-        tt, dtarget = self.projectile_hit(dx, dy, target)
-        te, denemy = self.projectile_hit(dx, dy, enemy)
-        if dtarget <= TargetSize and denemy > TargetSize:
-            self.PP = (self.PP[0] + dx*tt, self.PP[1] + dy*tt)
-            return True, False
-        elif dtarget > TargetSize and denemy <= TargetSize:
-            self.PP = (self.PP[0] + dx*te, self.PP[1] + dy*te)
-            return False, True
-        elif dtarget <= TargetSize and denemy <= TargetSize:
-            if tt < te:
-                self.PP = (self.PP[0] + dx*tt, self.PP[1] + dy*tt)
-                return True, False
-            else:
-                self.PP = (self.PP[0] + dx*te, self.PP[1] + dy*te)
-                return False, True
-        else:
-            self.PP = (self.PP[0] + dx, self.PP[1] + dy)
-            if self.PP[0] <= X0 or self.PP[0] >= X1 or self.PP[1] <= Y0 or self.PP[1] >= Y1:
-                self.PP = self.PA = None        # out of bounds
-            return False, False
+    def move(self, action):
+        fell = False
+        if action in (FWD, FFWD, BCK):
+            d = self.Speed if action == FWD else (
+                self.Speed*2 if action == FFWD else
+                -self.Speed/2.1415
+            )
+            x = self.X + math.cos(self.Angle)*d
+            y = self.Y + math.sin(self.Angle)*d
+            x1 = max(X0, min(X1, x))
+            y1 = max(Y0, min(Y1, y))
+            fell = x1 != x or y1 != y
+            self.X, self.Y = x1, y1
+            #self.Reward += 0.001
+        elif action == LEFT:
+            self.Angle += self.RotSpeed
+            self.Angle = self.bind_angle(self.Angle)
+        elif action == RIGHT:
+            self.Angle -= self.RotSpeed
+            self.Angle = self.bind_angle(self.Angle)
+        self.FellOff = fell
+        return fell
+
+    def bind_angle(self, a):
+        while a < -math.pi:
+            a += math.pi*2
+        while a >= math.pi:
+            a -= math.pi*2
+        return a
+        
 
 class TankDuelProjectileEnv(ActiveEnvironment):
     
-    Speed = 0.01
-    RotSpeed = 5/180.0*math.pi
     TimeHorizon = 200
     BaseReward = 0.0
     FallReward = -20.0
     MissReward = -0.1
-    HitReward = 20.0
+    WinReward = 20.0
+    LooseReward = -WinReward
     
-    FIRE = 0
-    FWD = 1
-    LEFT = 2
-    RIGHT = 3
     NActions = 4
-    FFWD = 4
-    BCK = 5
-
-    NState = 9
+    NState = 10
     ObservationShape = (NState,)
 
     AvailableMask = np.ones((NActions,))
@@ -127,13 +150,6 @@ class TankDuelProjectileEnv(ActiveEnvironment):
         self.Tanks = [Tank() for _ in (0,1)]
         self.Target = Tank()
         
-    def bind_angle(self, a):
-        while a < -math.pi:
-            a += math.pi*2
-        while a >= math.pi:
-            a -= math.pi*2
-        return a
-        
     def observation(self, i):
         tank = self.Tanks[i]
         other = self.Tanks[1-i]
@@ -154,6 +170,7 @@ class TankDuelProjectileEnv(ActiveEnvironment):
         obs[7] = math.atan2(dy, dx)
         
         obs[8] = self.T/self.TimeHorizon
+        obs[9] = (tank.Projectile is not None and 1.0) or 0.0
         
         return obs
         
@@ -170,96 +187,71 @@ class TankDuelProjectileEnv(ActiveEnvironment):
         self.Side = 0
         
     def turn(self):
+
+        # reset things
+        for tank in self.Tanks:
+            tank.Hit = False
+            tank.Reward = 0.0
+            tank.FellOff = False
+
         done = False
+        
+        actions = [self.Agents[side].action(self.observation(side)) for side in (0,1)]
+        
+        # Launch projectiles
+        for action, tank in zip(actions, self.Tanks):
+            if action == FIRE:
+                tank.fire()
+                tank.Reward += self.MissReward
+
+        # move projectiles
         for side in (0,1):
-            done = self.move_tank(side)
-            if done:
-                break
-        else:
+            tank = self.Tanks[side]
+            other = self.Tanks[1-side]
+            p = tank.Projectile
+            if p is not None:
+                hit_tank = p.move(tank, [other, self.Target])
+                if p.out_of_bounds() or hit_tank:
+                    tank.Projectile = None
+                if hit_tank:
+                    hit_tank.Hit = True
+                    tank.Reward += self.WinReward
+                    hit_tank.Reward += self.LooseReward
+                    done = True
+        
+        # move tanks
+        if not done:
+            for side in (0,1):
+                tank = self.Tanks[side]
+                other = self.Tanks[1-side]
+                if not tank.Hit:
+                    done = fell = tank.move(action)
+                    tank.FellOff = fell
+                    if fell:
+                        tank.Reward += self.LooseReward
+                        # other.Reward += self.WinReward    do not reward the other tank
+        if not done:
             self.T -= 1
             if self.T <= 0:
                 done = True
+
+        for tank, agent in zip(self.Tanks, self.Agents):
+            agent.update(reward=tank.Reward)
+
         if done:
             for side in (0,1):
                 obs = self.observation(side)
                 self.Agents[side].done(obs)
+
         return done
             
-        
-    def move_tank(self, side):
-        #print("turn: side:", side, "   accumulated tank rewards:", [t.Reward for t in self.Tanks])
-        other_side = 1-side
-        tank = self.Tanks[side]
-        other = self.Tanks[other_side]
-        agent = self.Agents[side]
-        other_agent = self.Agents[other_side]
-        obs = self.observation(side)
-        #print("side:", side, " tank.Reward since last action:", tank.Reward)
-        action = agent.action(obs)
-
-        tank.Reward = reward = self.BaseReward
-        other_reward = 0.0
-        
-        tank.Fire = False        # for viewing
-        done = False
-        hit = False
-
-        if False and side == 1:
-            # debug - make second tank a passive fixed target
-            pass
-        else:
-            if action in (self.FWD, self.FFWD, self.BCK):
-                d = self.Speed if action == self.FWD else (
-                    self.Speed*2 if action == self.FFWD else
-                    -self.Speed/2.1415
-                )
-                x = tank.X + math.cos(tank.Angle)*d
-                y = tank.Y + math.sin(tank.Angle)*d
-                x1 = max(X0, min(X1, x))
-                y1 = max(Y0, min(Y1, y))
-                if x1 != x or y1 != y:  # bump ?
-                    reward = self.FallReward
-                    done = True
-                tank.X, tank.Y = x1, y1
-                #self.Reward += 0.001
-            elif action == self.FIRE and not tank.projectile_in_flight():
-                    
-                tank.Fire = True
-                if self.Duel and tank.hit(other):
-                    #print(f"hit {side} -> {other_side}")
-                    other.Hit = True
-                    reward = self.HitReward
-                    other_reward = -self.HitReward
-                    done = True
-                elif self.HitTarget and tank.hit(self.Target):
-                    #print(f"hit {side} -> target")
-                    reward = self.HitReward
-                    self.Target.Hit = True
-                    if self.Compete:
-                        other_reward = -self.HitReward
-                    done = True
-                else:
-                    #print(f"miss {self.Side}")
-                    reward = self.MissReward
-            elif action == self.LEFT:
-                tank.Angle += self.RotSpeed
-                tank.Angle = self.bind_angle(tank.Angle)
-            elif action == self.RIGHT:
-                tank.Angle -= self.RotSpeed
-                tank.Angle = self.bind_angle(tank.Angle)
-                
-            agent.update(reward=reward)
-            other_agent.update(reward=other_reward)
-
-        return done
-           
     def render(self):
         if self.Viewer is None:
             self.Viewer = Viewer(600, 600)
             self.Frame = self.Viewer.frame(0.0, 1.0, 0.0, 1.0)
             
             self.TankSprites = []
-            self.TankBeams = []
+            self.Projectiles = []
             self.TankBodies = []
             self.TankColors = [
                 (0.0, 0.5, 0.1),
@@ -272,16 +264,17 @@ class TankDuelProjectileEnv(ActiveEnvironment):
                 color = self.TankColors[i]
                 body = Polygon([(-0.02, -0.01), (0.02, 0.0), (-0.02, 0.01)]).color(*color)
                 sprite.add(body)
-                beam = Line(end=(FireRange, 0)).color(1.0, 0.5, 0.0)
-                sprite.add(beam)
                 self.Frame.add(sprite)
+                
+                projectile = Rectangle(-0.005, 0.005, -0.001, 0.001, transient=True).color(255,255,255)
+                self.Projectiles.append(projectile)
 
                 status = Text("", anchor_x="center", anchor_y="top", size=12, color=(255,255,255))
                 self.StatusLabels[agent.ID] = status
                 self.Frame.add(status)
                 
                 self.TankSprites.append(sprite)
-                self.TankBeams.append(beam)
+                self.Projectiles.append(projectile)
                 self.TankBodies.append(body)
 
             self.TargetSprite = Circle(TargetSize, filled=True).color(0.4, 0.4, 0.3)
@@ -289,14 +282,14 @@ class TankDuelProjectileEnv(ActiveEnvironment):
 
         self.TargetSprite.move_to(self.Target.X, self.Target.Y)
         hit = False
-        for i, (t, s, b, d) in enumerate(zip(self.Tanks, self.TankSprites, self.TankBeams, self.TankBodies)):
+        for i, (t, s, p, d) in enumerate(zip(self.Tanks, self.TankSprites, self.Projectiles, self.TankBodies)):
             agent = self.Agents[i]
             s.move_to(t.X, t.Y)
             s.rotate_to(t.Angle)
-            if t.Fire:
-                b.show()
-            else:
-                b.hide()
+            proj = t.Projectile
+            if proj is not None:
+                self.Frame.add(p)
+                p.move_to(proj.X, proj.Y).rotate_to(proj.Angle)
             if t.Hit:   
                 d.color(1.0,0.5,0.1)
             else:
