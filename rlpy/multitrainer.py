@@ -54,7 +54,7 @@ class MultiTrainer_Chain(TrainerBase):
                 self.NextUpdate += self.UpdateInterval
             done = max_episodes is not None and episodes >= max_episodes
             #print("MultiTrainer_Chain.train: episodes=", episodes, "  self.Episodes=", self.Episodes, "  max_episodes=", max_episodes)
-            maxrunning = max(a.RunningReward for a in self.Agents)
+            maxrunning = max(a.EpisodeRewardMA for a in self.Agents)
             done = done or target_reward is not None and maxrunning >= target_reward
         return maxrunning
         
@@ -106,7 +106,7 @@ class MultiTrainer_Independent(TrainerBase):
             done = max_episodes is not None and episodes >= max_episodes or \
                 max_steps is not None and total_steps >= max_steps
             #print("MultiTrainer_Chain.train: episodes=", episodes, "  self.Episodes=", self.Episodes, "  max_episodes=", max_episodes)
-            maxrunning = max(a.RunningReward for a in self.Agents)
+            maxrunning = max(a.EpisodeRewardMA for a in self.Agents)
             done = done or target_reward is not None and maxrunning >= target_reward
         return maxrunning
         
@@ -172,7 +172,7 @@ class MultiTrainer_Sync(TrainerBase):
                         if random.random() < self.SyncFrequency:
                             rmin = rmax = None
                             for agent in self.Agents:
-                                r = agent.RunningReward
+                                r = agent.EpisodeRewardMA
                                 if r is not None:
                                     if rmin is None:
                                         rmin = rmax = r
@@ -182,7 +182,7 @@ class MultiTrainer_Sync(TrainerBase):
                             if rmax is None or rmin == rmax:
                                 alpha = 0.5
                             else:
-                                alpha = (a.RunningReward - rmin)/(rmax - rmin)
+                                alpha = (a.EpisodeRewardMA - rmin)/(rmax - rmin)
                             alpha = alpha * 0.8 + 0.1
                             
                             self.update_central(a.Brain, alpha)
@@ -192,6 +192,6 @@ class MultiTrainer_Sync(TrainerBase):
 
             done = max_episodes is not None and episodes >= max_episodes
             #print("MultiTrainer_Chain.train: episodes=", episodes, "  self.Episodes=", self.Episodes, "  max_episodes=", max_episodes)
-            maxrunning = max(a.RunningReward for a in self.Agents)
+            maxrunning = max(a.EpisodeRewardMA for a in self.Agents)
             done = done or target_reward is not None and maxrunning >= target_reward
         return maxrunning

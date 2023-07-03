@@ -122,7 +122,7 @@ class TankDuelProjectileEnv(ActiveEnvironment):
     TimeHorizon = 200
     BaseReward = 0.0
     FallReward = -20.0
-    MissReward = -0.1
+    MissReward = -0.2
     WinReward = 20.0
     LooseReward = -WinReward
     
@@ -216,7 +216,7 @@ class TankDuelProjectileEnv(ActiveEnvironment):
                 if hit_tank:
                     hit_tank.Hit = True
                     tank.Reward += self.WinReward
-                    hit_tank.Reward += self.LooseReward
+                    other.Reward += self.LooseReward
                     done = True
         
         # move tanks
@@ -225,7 +225,8 @@ class TankDuelProjectileEnv(ActiveEnvironment):
                 tank = self.Tanks[side]
                 other = self.Tanks[1-side]
                 if not tank.Hit:
-                    done = fell = tank.move(action)
+                    fell = tank.move(action)
+                    done = done or fell
                     tank.FellOff = fell
                     if fell:
                         tank.Reward += self.LooseReward
@@ -242,7 +243,7 @@ class TankDuelProjectileEnv(ActiveEnvironment):
             for side in (0,1):
                 obs = self.observation(side)
                 self.Agents[side].done(obs)
-
+        #print("turn(): rewards:", *[t.Reward for t in self.Tanks])
         return done
             
     def render(self):
