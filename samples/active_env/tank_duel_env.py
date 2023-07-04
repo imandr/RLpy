@@ -24,6 +24,7 @@ class Tank(object):
         self.Angle = None
         self.Reward = 0.0       # accumulated since last action
         self.Hit = False
+        self.Dead = False
 
     def random_init(self, x0, x1, y0, y1, margin):
         self.X = margin + random.random()*(x1-x0-margin*2)
@@ -46,8 +47,9 @@ class TankDuelEnv(ActiveEnvironment):
     RotSpeed = 5/180.0*math.pi
     TimeHorizon = 200
     BaseReward = 0.0
-    FallReward = -20.0
     MissReward = -0.1
+    WinReward = 20.0
+    FallReward = -WinReward
     HitReward = 20.0
     
     FIRE = 0
@@ -58,20 +60,21 @@ class TankDuelEnv(ActiveEnvironment):
     FFWD = 4
     BCK = 5
 
-    NState = 9
+    NState = 10
     ObservationShape = (NState,)
 
     AvailableMask = np.ones((NActions,))
 
-    def __init__(self, duel=True, target=True, compete=True):
+    def __init__(self, win="any", compete=True):
+
+        assert win in ("any", "target", "tank")
 
         self.Compete = compete
 
         high = np.array([1.0]*self.NState, dtype=np.float32)
         ActiveEnvironment.__init__(self, name="MultiTankEnv", 
                 action_space=spaces.Discrete(self.NActions), observation_space=spaces.Box(-high, high, dtype=np.float32))
-        self.Duel = duel
-        self.HitTarget = target
+        self.WinCondition = win
         self.Viewer=None
         self.Hit = False
         self.Fire = False
@@ -108,6 +111,7 @@ class TankDuelEnv(ActiveEnvironment):
         obs[7] = math.atan2(dy, dx)
         
         obs[8] = self.T/self.TimeHorizon
+        obs[9] = 1.0 if other.Dead else 0.0
         
         return obs
         
@@ -116,23 +120,31 @@ class TankDuelEnv(ActiveEnvironment):
         
     def reset(self, agents, training=True):
         self.Agents = agents
-        [t.random_init(X0, X1, Y0, Y1, Margin) for t in self.Tanks]
-        self.Target.random_init(X0, X1, Y0, Y1, Margin)
-        for t in self.Tanks:    t.Hit = False
+        self.Tanks = [Tank() for _ in (0,1)]
+        self.Target = Tank()
+        [t.random_init(X0, X1, Y0, Y1, Margin) for t in self.Tanks + [self.Target]]
         [a.reset(training) for a in agents]
         self.T = self.TimeHorizon
         self.Side = 0
         
     def turn(self):
         done = False
+        
+        for tank in self.Tanks + [self.Target]:
+            tank.Hit = False
+        
+        both_dead = True
         for side in (0,1):
             done = self.move_tank(side)
+            if not self.Tanks[side].Dead:
+                both_dead = False
             if done:
                 break
         else:
             self.T -= 1
             if self.T <= 0:
                 done = True
+        done = done or both_dead
         if done:
             for side in (0,1):
                 obs = self.observation(side)
@@ -158,6 +170,9 @@ class TankDuelEnv(ActiveEnvironment):
         done = False
         hit = False
 
+        if tank.Dead:
+            return done
+
         if False and side == 1:
             # debug - make second tank a passive fixed target
             pass
@@ -173,24 +188,29 @@ class TankDuelEnv(ActiveEnvironment):
                 y1 = max(Y0, min(Y1, y))
                 if x1 != x or y1 != y:  # bump ?
                     reward = self.FallReward
-                    done = True
+                    tank.Dead = True
+                    done = self.WinCondition != "target"
                 tank.X, tank.Y = x1, y1
                 #self.Reward += 0.001
             elif action == self.FIRE:
                 tank.Fire = True
-                if self.Duel and tank.hit(other):
-                    #print(f"hit {side} -> {other_side}")
+                if tank.hit(other) and not other.Dead:
                     other.Hit = True
-                    reward = self.HitReward
-                    other_reward = -self.HitReward
-                    done = True
-                elif self.HitTarget and tank.hit(self.Target):
+                    other.Dead = True
+                    other_reward = -self.WinReward
+                    if self.WinCondition in ("tank", "any"):
+                        reward = self.WinReward
+                        done = True
+                    else:
+                        reward = self.HitReward
+                elif tank.hit(self.Target):
                     #print(f"hit {side} -> target")
-                    reward = self.HitReward
-                    self.Target.Hit = True
-                    if self.Compete:
-                        other_reward = -self.HitReward
-                    done = True
+                    if self.WinCondition in ("target", "any"):
+                        self.Target.Hit = True
+                        reward = self.WinReward
+                        if self.Compete:
+                            other_reward = -self.WinReward
+                        done = True
                 else:
                     #print(f"miss {self.Side}")
                     reward = self.MissReward
@@ -237,7 +257,7 @@ class TankDuelEnv(ActiveEnvironment):
                 self.TankBeams.append(beam)
                 self.TankBodies.append(body)
 
-            self.TargetSprite = Circle(TargetSize, filled=True).color(0.4, 0.4, 0.3)
+            self.TargetSprite = Circle(TargetSize, filled=True).color(0.6, 0.3, 0.2)
             self.Frame.add(self.TargetSprite)
 
         self.TargetSprite.move_to(self.Target.X, self.Target.Y)
@@ -252,6 +272,8 @@ class TankDuelEnv(ActiveEnvironment):
                 b.hide()
             if t.Hit:   
                 d.color(1.0,0.5,0.1)
+            elif t.Dead:
+                d.color(0.6, 0.5, 0.5)
             else:
                 d.color(*self.TankColors[i])
             hit = hit or t.Hit

@@ -52,14 +52,14 @@ cross_training = 0.0
 
 if env_name == "duel":
     from tank_duel_env import TankDuelEnv
-    duel = True
-    hit_target = True
+    win = "any"
     compete = True
     brain_mode = "chain"
-    env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
+    env = TankDuelEnv(win=win, compete=compete)
     nagents = 2
     alpha = 0.2
     hidden = 500
+    entropy_weight = 0.003
 elif env_name == "duel_projectile":
     from tank_duel_projectile import TankDuelProjectileEnv
     duel = True
@@ -166,7 +166,7 @@ monitor.start_server(port)
 class SaveCallback(Callback):
     
     def __init__(self, save_to):
-        Callback.__init__(self)
+        Callback.__init__(self, fire_interval=10)
         self.BestEntropy = None
         self.EntropyMA = None
         self.NImprovements = 3
@@ -179,8 +179,8 @@ class SaveCallback(Callback):
             self.BestEntropy = self.EntropyMA = entropy
         else:
             self.EntropyMA += self.Alpha * (entropy-self.EntropyMA)
-        #print("SaveCallback: entropy:", entropy, "  MA:", self.EntropyMA, "  BestEntropy:", self.BestEntropy, "  NI:", self.NImprovements)
-        if self.EntropyMA < self.BestEntropy and self.SaveTo:
+        print("SaveCallback: entropy:", entropy, "  MA:", self.EntropyMA, "  BestEntropy:", self.BestEntropy, "  NI:", self.NImprovements)
+        if True or self.EntropyMA < self.BestEntropy and self.SaveTo:
             self.BestEntropy = self.EntropyMA
             self.NImprovements -= 1
             if self.NImprovements <= 0:
