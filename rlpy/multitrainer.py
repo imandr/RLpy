@@ -4,7 +4,18 @@ from .trainer import TrainerBase
 from .util import CallbackList
 import random
 
-class MultiTrainer_Chain(TrainerBase):
+class MultitrainerBase(TrainerBase):
+    
+    def __init__(self, env, agents, replay_keep_ratio = 0.1):
+        TrainerBase.__init__(self, replay_keep_ratio)
+        self.Env = env
+        self.Agents = agents
+
+    # overridable
+    def get_weights(self):
+        return self.Agents[0].Brain.get_weights()
+        
+class MultiTrainer_Chain(MultitrainerBase):
     
     #
     # Train only first agent and then propagate the changes to all other changes, applying alpha^n factor to the deltas
@@ -12,14 +23,12 @@ class MultiTrainer_Chain(TrainerBase):
     #
     
     def __init__(self, env, agents, replay_keep_ratio = 0.1, alpha = None, update_interval_episodes = 500, ring=False):
-        TrainerBase.__init__(self, replay_keep_ratio)
-        self.Env = env
+        MultitrainerBase.__init__(self, env, agents, replay_keep_ratio)
         self.Alpha = alpha or 0.5
         self.NextUpdate = self.UpdateInterval = update_interval_episodes
         self.Episodes = 0
-        self.Agents = agents
         self.Ring = ring
-        
+    
     def train(self, target_reward=None, max_episodes=None, max_steps=None,
             max_steps_per_episode=None, 
             steps_per_batch=None, episodes_per_batch=30, callbacks=None):
@@ -54,7 +63,7 @@ class MultiTrainer_Chain(TrainerBase):
                 self.NextUpdate += self.UpdateInterval
             done = max_episodes is not None and episodes >= max_episodes
             #print("MultiTrainer_Chain.train: episodes=", episodes, "  self.Episodes=", self.Episodes, "  max_episodes=", max_episodes)
-            maxrunning = max(a.RunningReward for a in self.Agents)
+            maxrunning = max(a.EpisodeRewardMA for a in self.Agents)
             done = done or target_reward is not None and maxrunning >= target_reward
         return maxrunning
         
@@ -63,18 +72,16 @@ class MultiTrainer_Ring(MultiTrainer_Chain):
     def __init__(self, env, agents, **args):
         MultiTrainer_Chain.__init__(self, env, agents, ring=True, **args)
         
-class MultiTrainer_Independent(TrainerBase):
+class MultiTrainer_Independent(MultitrainerBase):
     
     #
     # Train only first agent and then propagate the changes to all other changes, applying alpha^n factor to the deltas
     #
     
     def __init__(self, env, agents, replay_keep_ratio = 0.1, alpha = 0.9, update_interval_episodes = 100):
-        TrainerBase.__init__(self, replay_keep_ratio)
-        self.Env = env
+        MultitrainerBase.__init__(self, env, agents, replay_keep_ratio)
         self.NextUpdate = self.UpdateInterval = update_interval_episodes
         self.Episodes = 0
-        self.Agents = agents
         self.ReplayBuffers = [ReplayBuffer() for a in self.Agents]
 
     def train(self, target_reward=None, max_episodes=None, max_steps=None, 
@@ -84,7 +91,6 @@ class MultiTrainer_Independent(TrainerBase):
         if target_reward is None and max_episodes is None and max_steps is None:
             max_steps = 1000
 
-            
         callbacks = CallbackList.convert(callbacks)            # if callbacks is a list, convert it to the Callbacks object
         done = False
         episodes = 0
@@ -106,26 +112,23 @@ class MultiTrainer_Independent(TrainerBase):
             done = max_episodes is not None and episodes >= max_episodes or \
                 max_steps is not None and total_steps >= max_steps
             #print("MultiTrainer_Chain.train: episodes=", episodes, "  self.Episodes=", self.Episodes, "  max_episodes=", max_episodes)
-            maxrunning = max(a.RunningReward for a in self.Agents)
+            maxrunning = max(a.EpisodeRewardMA for a in self.Agents)
             done = done or target_reward is not None and maxrunning >= target_reward
         return maxrunning
         
-class MultiTrainer_Sync(TrainerBase):
+class MultiTrainer_Sync(MultitrainerBase):
     
     #
     # Train only first agent and then propagate the changes to all other changes, applying alpha^n factor to the deltas
     #
     
     def __init__(self, env, agents, replay_keep_ratio = 0.1, alpha = None, sync_frequency = 0.02):
-        TrainerBase.__init__(self, replay_keep_ratio)
-        self.Env = env
+        MultitrainerBase.__init__(self, env, agents, replay_keep_ratio)
         self.HistoryBuffers = {}        # {id(brain) -> [episode_history,...]}
         self.Alpha = alpha or 0.5
         self.Episodes = 0
         self.WeightsCentral = None
         self.SyncFrequency = sync_frequency
-        self.Agents = agents
-        
         
     def update_central(self, brain, alpha):
         if self.WeightsCentral is None:
@@ -172,7 +175,7 @@ class MultiTrainer_Sync(TrainerBase):
                         if random.random() < self.SyncFrequency:
                             rmin = rmax = None
                             for agent in self.Agents:
-                                r = agent.RunningReward
+                                r = agent.EpisodeRewardMA
                                 if r is not None:
                                     if rmin is None:
                                         rmin = rmax = r
@@ -182,7 +185,7 @@ class MultiTrainer_Sync(TrainerBase):
                             if rmax is None or rmin == rmax:
                                 alpha = 0.5
                             else:
-                                alpha = (a.RunningReward - rmin)/(rmax - rmin)
+                                alpha = (a.EpisodeRewardMA - rmin)/(rmax - rmin)
                             alpha = alpha * 0.8 + 0.1
                             
                             self.update_central(a.Brain, alpha)
@@ -192,6 +195,6 @@ class MultiTrainer_Sync(TrainerBase):
 
             done = max_episodes is not None and episodes >= max_episodes
             #print("MultiTrainer_Chain.train: episodes=", episodes, "  self.Episodes=", self.Episodes, "  max_episodes=", max_episodes)
-            maxrunning = max(a.RunningReward for a in self.Agents)
+            maxrunning = max(a.EpisodeRewardMA for a in self.Agents)
             done = done or target_reward is not None and maxrunning >= target_reward
         return maxrunning

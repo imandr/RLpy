@@ -245,6 +245,11 @@ class ProgressCallback(Callback):
             _, loser_ma, _ = self.LoserRewardSmoothie(loser_reward)
             _, diff_ma, _ = self.RewardDiffSmoothie(winner_reward - loser_reward)
             self.T += 1
+            #for agent in agents:
+            #    if agent.EpisodeReward < -50:
+            #        for r in agent.History:
+            #            print(r)
+            #print("end of training episode: episode rewards:", *[agent.EpisodeReward for agent in agents])
             if self.T >= self.NextPrint:
                 print("end of training episode", self.T, "    loser/winner reward MA: %.3f/%.3f" % (loser_ma, winner_ma), "  diff MA: %.3f" % (diff_ma,))
                 self.NextPrint = self.T + self.PrintInterval
