@@ -5,7 +5,7 @@ import time, os.path
 import gradnet
 from gradnet import ModelClient
 
-opts, args = getopt.getopt(sys.argv[1:], "w:s:l:b:n:a:m:r")
+opts, args = getopt.getopt(sys.argv[1:], "w:s:l:b:n:a:m:rt:")
 opts = dict(opts)
 load_from = opts.get("-l")
 if not load_from:
@@ -18,6 +18,7 @@ save_to = opts.get("-s") or opts.get("-w")
 brain_mode = opts.get("-b", "chain")        # or chain or sync
 nagents = int(opts.get("-n", 1))
 do_render = "-q" not in opts
+test_runs = int(opts.get("-t", 3))
 
 env_name = args[0]
 
@@ -45,7 +46,7 @@ max_steps_per_episode = 300
 port = 8989
 hidden = 400
 
-entropy_weight = 0.001
+entropy_weight = 0.002
 critic_weight = 0.9
 invalid_action_weight = 10.0
 cross_training = 0.0
@@ -92,7 +93,7 @@ else:
 optimizer = gradnet.optimizers.get_optimizer("adagrad", learning_rate=learning_rate) 
 
 if brain_mode == "share":
-    brain = BrainDiscrete(env.observation_space, env.action_space, gamma=gamma, 
+    brain = BrainDiscrete(env.observation_space.shape, env.action_space.n, gamma=gamma, 
         cutoff=cutoff, beta=beta,
         learning_rate=learning_rate, entropy_weight=entropy_weight,
         optimizer=optimizer, hidden=hidden,
@@ -256,17 +257,38 @@ class ProgressCallback(Callback):
 
 class SyncModelCallback(Callback):
     
+    SyncInterval = 50
+    
     def __init__(self, model_client, **args):
         Callback.__init__(self, **args)
         self.ModelClient = model_client
+        self.RewardDiffSmoothie = Smoothie(0.01)
+        self.T = 0
+        self.NextSync = self.SyncInterval
     
+    def active_env_end_episode(self, env, agents, training):
+        if training:
+            winner = loser = agents[0].ID
+            winner_reward = loser_reward = agents[0].EpisodeReward
+            for agent in agents[1:]:
+                r = agent.EpisodeReward
+                if r > winner_reward:
+                    winner = agent.ID
+                    winner_reward = r
+                elif r < loser_reward:
+                    loser = agent.ID
+                    loser_reward = r
+            self.RewardDiffSmoothie(winner_reward - loser_reward)
+            #print("SyncModelCallback: loser/winner:", loser_reward, winner_reward, "  diff ma:", ma)
+            
     def train_batch_end(self, agent, batch_eposides, batch_steps, stats):
-        brain = agent.Brain
-        brain.set_weights(self.ModelClient.update(brain.get_weights()))
-        print("weights synchronized")
-
-
-
+        self.T += 1
+        if self.T >= self.NextSync:
+            brain = agent.Brain
+            reward = self.RewardDiffSmoothie.MovingAverage
+            self.ModelClient.update_weights(brain.get_weights())        #, reward)
+            print("weights synchronized")
+            self.NextSync = self.T + self.SyncInterval
 
 if load_from:
     [b.load_weights(load_from) for b in brains]
@@ -280,8 +302,8 @@ progress_cb = ProgressCallback()
 callbacks = [mon_cb, save_cb, WeightSyncCallback(), progress_cb]
 
 if model_client is not None:
-    callbacks.append(SyncModelCallback(model_client, fire_interval=50))
-    weights = model_client.get()
+    callbacks.append(SyncModelCallback(model_client))
+    weights = model_client.get_weights()
     if weights:
         [b.set_weights(weights) for b in brains]
         print("Weights loaded from the model server")
@@ -293,7 +315,7 @@ for epoch in range(1000):
     print(f"====== end of training run. total episodes: {trainer.Episodes} ======")
     print("====== testing ======")
     scores = np.zeros((nagents,))
-    for episode in range(5):
+    for episode in range(test_runs):
         env.run(trainer.Agents, training=False, render=do_render)
         winner = np.argmax([a.EpisodeReward for a in trainer.Agents])
         loser = np.argmin([a.EpisodeReward for a in trainer.Agents])

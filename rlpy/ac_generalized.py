@@ -590,7 +590,7 @@ class BrainMixed(Brain):
 
     def default_model(self, input_shape, num_actions, num_controls, hidden):
         inp = Input(input_shape, name="input")
-        common1 = Dense(hidden, activation="relu", name="common1")(inp)
+        common1 = Dense(hidden, activation="relu", name="common")(inp)
         common = Dense(hidden//2, activation="relu", name="common")(common1)
 
         value = Dense(1, name="critic")(common)

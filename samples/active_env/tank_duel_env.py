@@ -99,13 +99,13 @@ class TankDuelEnv(ActiveEnvironment):
         dy = other.Y - tank.Y
         bearing = math.atan2(dy, dx)
         obs[3] = math.sqrt(dx*dx + dy*dy)
-        obs[4] = bearing
+        obs[4] = bearing    # - tank.Angle
         obs[5] = other.Angle - tank.Angle
         
         dx = self.Target.X - tank.X
         dy = self.Target.Y - tank.Y
         obs[6] = math.sqrt(dx*dx + dy*dy)
-        obs[7] = math.atan2(dy, dx)
+        obs[7] = math.atan2(dy, dx) # - tank.Angle
         
         obs[8] = self.T/self.TimeHorizon
         

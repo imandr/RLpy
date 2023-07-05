@@ -1,6 +1,6 @@
 from gradnet import ModelClient
 
-from rlpy import MultiAgent
+from rlpy import MultiAgent, BrainDiscrete
 import numpy as np, getopt, sys
 from util import Monitor, Smoothie
 import time, os.path
@@ -25,10 +25,10 @@ model_client = ModelClient(env_name, model_server_url)
 max_steps_per_episode = 300
 if env_name == "duel":
     from tank_duel_env import TankDuelEnv
-    win = "any"
-    compete = True
-    env = TankDuelEnv(win=win, compete=compete)
+    brain_mode = "chain"
+    env = TankDuelEnv()
     nagents = 2
+    alpha = 0.2
     hidden = 500
 else:
     import gym
@@ -36,12 +36,13 @@ else:
     brain_mode="share"
     nagents = 1
 
-optimizer = gradnet.optimizers.get_optimizer("adagrad", learning_rate=learning_rate) 
-
-brain = BrainDiscrete(env.observation_space, env.action_space, hidden=hidden)
+brain = BrainDiscrete(env.observation_space.shape, env.action_space.n, hidden=hidden)
 agents = [MultiAgent(brain, id=i) for i in range(nagents)]
 
 while True:
-    
+    weights = None
+    while weights is None:
+        time.sleep(1.0)
+        weights = model_client.get_weights()
+    brain.set_weights(weights)
     env.run(agents, training=False, render=do_render)
-            

@@ -13,7 +13,7 @@ class MovingAverage(object):
 
 class Smoothie(object):
     def __init__(self, alpha = 0.1):
-        self.Low = self.High = None
+        self.Low = self.High = self.MovingAverage = None
         self.Alpha = alpha
         self.Record = []
         
