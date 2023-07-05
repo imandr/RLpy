@@ -72,7 +72,7 @@ class MultiTrainer_Ring(MultiTrainer_Chain):
     def __init__(self, env, agents, **args):
         MultiTrainer_Chain.__init__(self, env, agents, ring=True, **args)
         
-class MultiTrainer_Independent(MultitrainerBase):
+class MultiTrainer_Shared(MultitrainerBase):
     
     #
     # Train only first agent and then propagate the changes to all other changes, applying alpha^n factor to the deltas
@@ -82,7 +82,6 @@ class MultiTrainer_Independent(MultitrainerBase):
         MultitrainerBase.__init__(self, env, agents, replay_keep_ratio)
         self.NextUpdate = self.UpdateInterval = update_interval_episodes
         self.Episodes = 0
-        self.ReplayBuffers = [ReplayBuffer() for a in self.Agents]
 
     def train(self, target_reward=None, max_episodes=None, max_steps=None, 
             max_steps_per_episode=None, 
@@ -92,20 +91,26 @@ class MultiTrainer_Independent(MultitrainerBase):
             max_steps = 1000
 
         callbacks = CallbackList.convert(callbacks)            # if callbacks is a list, convert it to the Callbacks object
+            
         done = False
         episodes = 0
         total_steps = 0
         while not done:
             self.Env.run(self.Agents, callbacks)
-            for agent, replay_buffer in zip(self.Agents, self.ReplayBuffers):
-                replay_buffer.remember_episode(agent.episode_history())
-                episodes_trained, steps_trained = self.train_on_buffer(agent,
-                            replay_buffer=replay_buffer,
-                            episodes_per_batch=episodes_per_batch, steps_per_batch=steps_per_batch, callbacks=callbacks
-                    )
-                self.HistoryBuffers[aid] = history
-                episodes += episodes_trained
-                total_steps += steps_trained
+            if callbacks is not None:
+                for agent in self.Agents:
+                    callbacks("train_episode_end", agent, agent.EpisodeReward, agent.episode_history())
+                callbacks("active_env_episode_end", self.Agents)
+
+            for a in self.Agents:
+                self.remember_episode(a.episode_history())
+
+            episodes_trained, steps_trained = self.train_on_buffer(self.Agents[0], callbacks = callbacks, 
+                episodes_per_batch = episodes_per_batch, steps_per_batch = steps_per_batch, 
+                max_steps = max_steps, max_episodes = max_episodes)
+
+            episodes += episodes_trained
+            total_steps += steps_trained
 
             self.Episodes = episodes
             

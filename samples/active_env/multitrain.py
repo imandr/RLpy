@@ -1,4 +1,4 @@
-from rlpy import MultiTrainer_Chain, ActiveEnvironment, MultiAgent, MultiTrainer_Independent, MultiTrainer_Sync, MultiTrainer_Ring, Callback, BrainDiscrete
+from rlpy import MultiTrainer_Chain, ActiveEnvironment, MultiAgent, MultiTrainer_Shared, MultiTrainer_Sync, MultiTrainer_Ring, Callback, BrainDiscrete
 import numpy as np, getopt, sys
 from util import Monitor, Smoothie
 import time, os.path
@@ -56,11 +56,13 @@ if env_name == "duel":
     duel = True
     hit_target = True
     compete = True
-    brain_mode = "chain"
-    env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
+    brain_mode = "share"
+    env = TankDuelEnv(duel=duel, target=hit_target, compete=compete, time_limit=max_steps_per_episode)
     nagents = 2
-    alpha = 0.2
+    alpha = 0.9
     hidden = 500
+    entropy_weight = 0.01
+    max_steps_per_episode = 200
 elif env_name == "duel_projectile":
     from tank_duel_projectile import TankDuelProjectileEnv
     duel = True
@@ -100,7 +102,7 @@ if brain_mode == "share":
         critic_weight=critic_weight, invalid_action_weight=invalid_action_weight)
     brains = [brain]
     agents = [MultiAgent(brain, id=i) for i in range(nagents)]
-    trainer = MultiTrainer_Independent(env, agents)
+    trainer = MultiTrainer_Shared(env, agents)
 elif brain_mode in ("sync", "chain", "ring"):
     brains = [BrainDiscrete(env.observation_space.shape, env.action_space.n, gamma=gamma, 
         cutoff=cutoff, beta=beta,

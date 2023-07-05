@@ -44,26 +44,25 @@ class TankDuelEnv(ActiveEnvironment):
     
     Speed = 0.01
     RotSpeed = 5/180.0*math.pi
-    TimeHorizon = 200
     BaseReward = 0.0
     FallReward = -20.0
-    MissReward = -0.1
+    MissReward = -0.5
     HitReward = 20.0
     
     FIRE = 0
     FWD = 1
     LEFT = 2
     RIGHT = 3
-    NActions = 4
     FFWD = 4
     BCK = 5
+    NActions = 6
 
     NState = 9
     ObservationShape = (NState,)
 
     AvailableMask = np.ones((NActions,))
 
-    def __init__(self, duel=True, target=True, compete=True):
+    def __init__(self, duel=True, target=True, compete=True, time_limit=200):
 
         self.Compete = compete
 
@@ -76,7 +75,7 @@ class TankDuelEnv(ActiveEnvironment):
         self.Hit = False
         self.Fire = False
         self.EpisodeReward = 0.0
-        self.T = self.TimeHorizon
+        self.T = self.TimeHorizon = time_limit
         
         self.Tanks = [Tank() for _ in (0,1)]
         self.Target = Tank()
@@ -99,13 +98,13 @@ class TankDuelEnv(ActiveEnvironment):
         dy = other.Y - tank.Y
         bearing = math.atan2(dy, dx)
         obs[3] = math.sqrt(dx*dx + dy*dy)
-        obs[4] = bearing    # - tank.Angle
-        obs[5] = other.Angle - tank.Angle
+        obs[4] = bearing #- tank.Angle
+        obs[5] = other.Angle
         
         dx = self.Target.X - tank.X
         dy = self.Target.Y - tank.Y
         obs[6] = math.sqrt(dx*dx + dy*dy)
-        obs[7] = math.atan2(dy, dx) # - tank.Angle
+        obs[7] = math.atan2(dy, dx) #- tank.Angle
         
         obs[8] = self.T/self.TimeHorizon
         
@@ -237,10 +236,9 @@ class TankDuelEnv(ActiveEnvironment):
                 self.TankBeams.append(beam)
                 self.TankBodies.append(body)
 
-            self.TargetSprite = Circle(TargetSize, filled=True).color(0.4, 0.4, 0.3)
-            self.Frame.add(self.TargetSprite)
+            self.TargetSprite = Circle(TargetSize, filled=False, width=2, transient=True).color(1.0, 0.5, 0.3)
+            self.HitTargetSprite = Circle(TargetSize, filled=True, transient=True).color(1.0, 0.5, 0.3)
 
-        self.TargetSprite.move_to(self.Target.X, self.Target.Y)
         hit = False
         for i, (t, s, b, d) in enumerate(zip(self.Tanks, self.TankSprites, self.TankBeams, self.TankBodies)):
             agent = self.Agents[i]
@@ -260,9 +258,9 @@ class TankDuelEnv(ActiveEnvironment):
             status.move_to(t.X, t.Y - 0.03)
         if self.Target.Hit:
             hit = True
-            self.TargetSprite.color(1.0, 0.5, 0.3)
+            self.Frame.add(self.HitTargetSprite, at=(self.Target.X, self.Target.Y))
         else:
-            self.TargetSprite.color(0.4, 0.4, 0.3)
+            self.Frame.add(self.TargetSprite, at=(self.Target.X, self.Target.Y))
             
         #self.ScoreText.Text = "r:%.3f R:%.3f %s" % ([], self.EpisodeReward, self.observation())
             
