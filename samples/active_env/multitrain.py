@@ -47,7 +47,7 @@ port = 8989
 hidden = 400
 
 entropy_weight = 0.002
-critic_weight = 0.9
+critic_weight = 1.0
 invalid_action_weight = 10.0
 cross_training = 0.0
 
@@ -56,13 +56,12 @@ if env_name == "duel":
     duel = True
     hit_target = True
     compete = True
-    brain_mode = "share"
-    env = TankDuelEnv(duel=duel, target=hit_target, compete=compete, time_limit=max_steps_per_episode)
+    brain_mode = "chain"
+    env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
     nagents = 2
-    alpha = 0.9
+    alpha = 0.5
     hidden = 500
-    entropy_weight = 0.01
-    max_steps_per_episode = 200
+    entropy_weight = 0.005
 elif env_name == "duel_projectile":
     from tank_duel_projectile import TankDuelProjectileEnv
     duel = True

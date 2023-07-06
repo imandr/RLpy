@@ -46,16 +46,17 @@ class TankDuelEnv(ActiveEnvironment):
     RotSpeed = 5/180.0*math.pi
     BaseReward = 0.0
     FallReward = -20.0
-    MissReward = -0.5
-    HitReward = 20.0
+    MissReward = -0.1
+    WinReward = 20.0
+    DrawReward = -10.0
     
     FIRE = 0
     FWD = 1
     LEFT = 2
     RIGHT = 3
     FFWD = 4
+    NActions = 5
     BCK = 5
-    NActions = 6
 
     NState = 9
     ObservationShape = (NState,)
@@ -94,6 +95,7 @@ class TankDuelEnv(ActiveEnvironment):
         obs[0] = tank.X
         obs[1] = tank.Y
         obs[2] = tank.Angle
+        
         dx = other.X - tank.X
         dy = other.Y - tank.Y
         bearing = math.atan2(dy, dx)
@@ -128,10 +130,13 @@ class TankDuelEnv(ActiveEnvironment):
             done = self.move_tank(side)
             if done:
                 break
-        else:
+        if not done:
             self.T -= 1
             if self.T <= 0:
                 done = True
+                for tank, agent in zip(self.Tanks, self.Agents):
+                    agent.update(reward=self.DrawReward)
+                    tank.Reward += self.DrawReward
         if done:
             for side in (0,1):
                 obs = self.observation(side)
@@ -155,53 +160,54 @@ class TankDuelEnv(ActiveEnvironment):
         
         tank.Fire = False        # for viewing
         done = False
-        hit = False
+        hit = ""
 
-        if False and side == 1:
-            # debug - make second tank a passive fixed target
-            pass
-        else:
-            if action in (self.FWD, self.FFWD, self.BCK):
-                d = self.Speed if action == self.FWD else (
-                    self.Speed*2 if action == self.FFWD else
-                    -self.Speed/2.1415
-                )
-                x = tank.X + math.cos(tank.Angle)*d
-                y = tank.Y + math.sin(tank.Angle)*d
-                x1 = max(X0, min(X1, x))
-                y1 = max(Y0, min(Y1, y))
-                if x1 != x or y1 != y:  # bump ?
-                    reward = self.FallReward
-                    done = True
-                tank.X, tank.Y = x1, y1
-                #self.Reward += 0.001
-            elif action == self.FIRE:
-                tank.Fire = True
-                if self.Duel and tank.hit(other):
-                    #print(f"hit {side} -> {other_side}")
-                    other.Hit = True
-                    reward = self.HitReward
-                    other_reward = -self.HitReward
-                    done = True
-                elif self.HitTarget and tank.hit(self.Target):
-                    #print(f"hit {side} -> target")
-                    reward = self.HitReward
-                    self.Target.Hit = True
-                    if self.Compete:
-                        other_reward = -self.HitReward
-                    done = True
-                else:
-                    #print(f"miss {self.Side}")
-                    reward = self.MissReward
-            elif action == self.LEFT:
-                tank.Angle += self.RotSpeed
-                tank.Angle = self.bind_angle(tank.Angle)
-            elif action == self.RIGHT:
-                tank.Angle -= self.RotSpeed
-                tank.Angle = self.bind_angle(tank.Angle)
-                
-            agent.update(reward=reward)
-            other_agent.update(reward=other_reward)
+        if action in (self.FWD, self.FFWD, self.BCK):
+            d = self.Speed if action == self.FWD else (
+                self.Speed*2 if action == self.FFWD else
+                -self.Speed/2.1415
+            )
+            x = tank.X + math.cos(tank.Angle)*d
+            y = tank.Y + math.sin(tank.Angle)*d
+            x1 = max(X0, min(X1, x))
+            y1 = max(Y0, min(Y1, y))
+            if x1 != x or y1 != y:  # bump ?
+                reward = self.FallReward
+                done = True
+            tank.X, tank.Y = x1, y1
+            #self.Reward += 0.001
+        elif action == self.FIRE:
+            tank.Fire = True
+            if self.Duel and tank.hit(other):
+                #print(f"hit {side} -> {other_side}")
+                hit = f"{side}->{other_side}"
+                other.Hit = True
+                reward = self.WinReward
+                other_reward = -self.WinReward
+                done = True
+            elif self.HitTarget and tank.hit(self.Target):
+                #print(f"hit {side} -> target")
+                hit = f"{side}->target"
+                reward = self.WinReward
+                self.Target.Hit = True
+                if self.Compete:
+                    other_reward = -self.WinReward
+                done = True
+            else:
+                #print(f"miss {self.Side}")
+                reward = self.MissReward
+        elif action == self.LEFT:
+            tank.Angle += self.RotSpeed
+            tank.Angle = self.bind_angle(tank.Angle)
+        elif action == self.RIGHT:
+            tank.Angle -= self.RotSpeed
+            tank.Angle = self.bind_angle(tank.Angle)
+
+        agent.update(reward=reward)
+        other_agent.update(reward=other_reward)
+
+        if done:
+            print("done: rewards:", reward, other_reward, "hit:", hit)
 
         return done
            
