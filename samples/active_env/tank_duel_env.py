@@ -45,10 +45,10 @@ class TankDuelEnv(ActiveEnvironment):
     Speed = 0.01
     RotSpeed = 5/180.0*math.pi
     BaseReward = 0.0
-    FallReward = -20.0
     MissReward = -0.1
     WinReward = 20.0
-    DrawReward = -10.0
+    FallReward = -WinReward
+    DrawReward = -WinReward
     
     FIRE = 0
     FWD = 1
@@ -163,12 +163,11 @@ class TankDuelEnv(ActiveEnvironment):
         hit = ""
 
         if action in (self.FWD, self.FFWD, self.BCK):
-            d = self.Speed if action == self.FWD else (
-                self.Speed*2 if action == self.FFWD else
-                -self.Speed/2.1415
-            )
-            x = tank.X + math.cos(tank.Angle)*d
-            y = tank.Y + math.sin(tank.Angle)*d
+            if action == self.FFWD: d = self.Speed * 2
+            elif action == self.BCK: d = -self.Speed * 0.67
+            else: d = self.Speed            # FWD
+            x = tank.X + math.cos(tank.Angle) * d
+            y = tank.Y + math.sin(tank.Angle) * d
             x1 = max(X0, min(X1, x))
             y1 = max(Y0, min(Y1, y))
             if x1 != x or y1 != y:  # bump ?

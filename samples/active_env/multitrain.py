@@ -59,9 +59,10 @@ if env_name == "duel":
     brain_mode = "chain"
     env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
     nagents = 2
-    alpha = 0.5
+    alpha = 0.9
     hidden = 500
     entropy_weight = 0.005
+    gamma = 0.995
 elif env_name == "duel_projectile":
     from tank_duel_projectile import TankDuelProjectileEnv
     duel = True
