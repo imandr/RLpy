@@ -26,7 +26,7 @@ max_steps_per_episode = 300
 if env_name == "duel":
     from tank_duel_env import TankDuelEnv
     brain_mode = "chain"
-    env = TankDuelEnv(time_limit=200)
+    env = TankDuelEnv(duel=False)
     nagents = 2
     alpha = 0.2
     hidden = 500

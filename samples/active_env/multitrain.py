@@ -53,13 +53,13 @@ cross_training = 0.0
 
 if env_name == "duel":
     from tank_duel_env import TankDuelEnv
-    duel = True
+    duel = False
     hit_target = True
     compete = True
     brain_mode = "chain"
     env = TankDuelEnv(duel=duel, target=hit_target, compete=compete)
     nagents = 2
-    alpha = 0.9
+    alpha = 0.2
     hidden = 500
     entropy_weight = 0.005
     gamma = 0.995

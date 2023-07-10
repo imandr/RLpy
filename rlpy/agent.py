@@ -194,23 +194,21 @@ class MultiAgent(object):
         
         #print("Agent[%d].reward(%.4f) accumulated=%.4f" % (id(self)%100, reward, self.Reward))
         
-    def done(self, last_observation, reward=None, metadata=None):
+    def done(self, last_observation, reward=0.0, metadata=None):
         #print("agent.done()", f"reward {reward}" if reward is not None else "")
         #print("---------------------------------------------------")
         #print("Agent[%d].done()" % (id(self)%100, ))
         #print("Agent[%d].done(reward=%f)" % (id(self)%100, reward))
         #print("Agent", id(self)%10, "done:", reward)
         
-        if reward:
-            self.StepReward += reward
-        self.EpisodeReward += self.StepReward
-        
         if not self.Done:
+            self.Done = True
+            self.StepReward += reward
+            self.EpisodeReward += self.StepReward
             if self.LastAction is not None:
                 self.Rewards.append(self.StepReward)
             self.StepReward = 0.0
             self.EpisodeRewardMA += self.Alpha*(self.EpisodeReward - self.EpisodeRewardMA)
-            self.Done = True
             self.History.append((last_observation, None, reward))
         #self.Observations.append(observation)
         
