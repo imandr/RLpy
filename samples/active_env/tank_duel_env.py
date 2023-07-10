@@ -96,7 +96,7 @@ class Tank(Shooter):
         other_reward = 0.0
         
         self.Fired = False        # for viewing
-        done = False
+        fell = False
         hit = ""
 
         if action in (self.FWD, self.FFWD, self.BCK):
@@ -107,9 +107,10 @@ class Tank(Shooter):
             y = self.Y + math.sin(self.Angle) * d
             x1 = max(X0, min(X1, x))
             y1 = max(Y0, min(Y1, y))
-            if x1 != x or y1 != y:  # bump ?
+            if x1 != x or y1 != y:  # fell ?
                 reward += env.FallReward
-                done = True
+                fell = True
+                self.Dead = True
             self.X, self.Y = x1, y1
             #self.Reward += 0.001
         elif action == self.FIRE:
@@ -120,20 +121,15 @@ class Tank(Shooter):
                 print("tank hit")
                 other.Hit = True
                 other.Dead = True
-                if env.Duel:
-                    done = True
-                reward += env.WinReward
+                reward += env.KillReward
                 other_reward -= env.WinReward
             elif not target.Dead and env.HitTarget and self.hit(target):
                 #print(f"hit {side} -> target")
                 hit = f"target hit"
                 print("target hit")
-                reward += env.WinReward
+                reward += env.KillReward
                 target.Hit = True
                 target.Dead = True
-                if env.Compete:
-                    other_reward -= env.WinReward
-                done = True
             else:
                 reward += env.MissReward
         elif action == self.LEFT:
@@ -141,10 +137,7 @@ class Tank(Shooter):
         elif action == self.RIGHT:
             self.Angle = bind_angle(self.Angle - self.RotSpeed)
 
-        if done:
-            print("done: rewards:", reward, other_reward, "hit:", hit)
-
-        return done, reward, other_reward
+        return fell, reward, other_reward
 
 
 class TankDuelEnv(ActiveEnvironment):
@@ -177,7 +170,7 @@ class TankDuelEnv(ActiveEnvironment):
         self.Tanks = []
         self.Target = Target()
         
-    NState = 10
+    NState = 11
     ObservationShape = (NState,)
 
     def observation(self, i):
@@ -194,14 +187,15 @@ class TankDuelEnv(ActiveEnvironment):
         obs[3] = math.sqrt(dx*dx + dy*dy)
         obs[4] = bearing #- tank.Angle
         obs[5] = other.Angle
-        obs[6] = other.Hit and 1.0 or 0.0
+        obs[6] = other.Dead and 1.0 or 0.0
         
         dx = self.Target.X - tank.X
         dy = self.Target.Y - tank.Y
         obs[7] = math.sqrt(dx*dx + dy*dy)
         obs[8] = math.atan2(dy, dx) #- tank.Angle
+        obs[9] = target.Dead and 1.0 or 0.0
         
-        obs[9] = self.T/self.TimeHorizon
+        obs[10] = self.T/self.TimeHorizon
         
         return obs
         
@@ -231,17 +225,27 @@ class TankDuelEnv(ActiveEnvironment):
         for side, tank in enumerate(self.Tanks):
             if not tank.Dead:
                 other = self.Tanks[1-side]
-                tank_done, reward, other_reward = tank.move(self, actions[side], other, self.Target)
-                done = done or tank_done
+                fell, reward, other_reward = tank.move(self, actions[side], other, self.Target)
                 tank.Agent.update(reward=reward)
                 other.Agent.update(reward=other_reward)
+
+        done = all(t.Dead for t in self.Tanks)
+        
+        if not done:
+            done = self.Target.Dead and sum(0 if t.Dead else 1 for t in self.Tanks) == 1
+            if done:
+                for t in self.Tanks:
+                    if not t.Dead:
+                        t.Agent.update(reward=self.WinReward)
 
         if not done:
             self.T -= 1
             if self.T <= 0:
                 done = True
                 for tank in self.Tanks:
-                    tank.Agent.update(reward=self.DrawReward)
+                    if not tank.Dead:
+                        tank.Agent.update(reward=self.DrawReward)
+
         if done:
             for side, tank in enumerate(self.Tanks):
                 obs = self.observation(side)
