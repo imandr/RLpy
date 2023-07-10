@@ -236,8 +236,8 @@ class TankDuelEnv(ActiveEnvironment):
                 tank.Agent.update(reward=reward)
                 other.Agent.update(reward=other_reward)
 
+        self.T -= 1
         if not done:
-            self.T -= 1
             if self.T <= 0:
                 done = True
                 for tank in self.Tanks:
