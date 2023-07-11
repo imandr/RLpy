@@ -144,6 +144,7 @@ class MultiAgent(object):
             id = MultiAgent.Index
             MultiAgent.Index += 1
         self.ID = id
+        self.LastStepReward = 0.0
 
     def reset(self, training=True):
         #print("---------------------------------------------------")
@@ -160,6 +161,7 @@ class MultiAgent(object):
         self.Metadata = []
         self.Done = False
         self.LastAction = None
+        self.LastStepReward = 0.0
         #print("Agent[%d].reset()" % (id(self)%100,))
         self.LastMetadata = None
         self.History = []           # [(observation, action, reward)]
@@ -173,8 +175,6 @@ class MultiAgent(object):
             self.ValidActions.append(valid_actions)
         if self.LastAction is not None:
             self.Rewards.append(self.StepReward)
-        self.EpisodeReward += self.StepReward
-        self.StepReward = 0.0
         value, probs, action = self.Brain.action(observation, valid_actions, self.Training)
         self.Actions.append(action)
         self.Values.append(value)
@@ -193,8 +193,13 @@ class MultiAgent(object):
             self.History.append((observation, None, reward))
         
         #print("Agent[%d].reward(%.4f) accumulated=%.4f" % (id(self)%100, reward, self.Reward))
-        
-    def done(self, last_observation, reward=0.0, metadata=None):
+
+    def end_turn(self):
+        self.EpisodeReward += self.StepReward
+        self.LastStepReward = self.StepReward
+        self.StepReward = 0.0
+
+    def done(self, last_observation, metadata=None):
         #print("agent.done()", f"reward {reward}" if reward is not None else "")
         #print("---------------------------------------------------")
         #print("Agent[%d].done()" % (id(self)%100, ))
@@ -203,13 +208,10 @@ class MultiAgent(object):
         
         if not self.Done:
             self.Done = True
-            self.StepReward += reward
-            self.EpisodeReward += self.StepReward
             if self.LastAction is not None:
-                self.Rewards.append(self.StepReward)
-            self.StepReward = 0.0
+                self.Rewards.append(self.LastStepReward)
             self.EpisodeRewardMA += self.Alpha*(self.EpisodeReward - self.EpisodeRewardMA)
-            self.History.append((last_observation, None, reward))
+            self.History.append((last_observation, None, 0.0))      # purely for rendering
         #self.Observations.append(observation)
         
     def episode_history(self):

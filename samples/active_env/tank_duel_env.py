@@ -96,7 +96,7 @@ class Tank(Shooter):
         other_reward = 0.0
         
         self.Fired = False        # for viewing
-        fell = False
+        event = None
         hit = ""
 
         if action in (self.FWD, self.FFWD, self.BCK):
@@ -109,7 +109,7 @@ class Tank(Shooter):
             y1 = max(Y0, min(Y1, y))
             if x1 != x or y1 != y:  # fell ?
                 reward += env.FallReward
-                fell = True
+                event = "fall"
                 self.Dead = True
             self.X, self.Y = x1, y1
             #self.Reward += 0.001
@@ -117,19 +117,17 @@ class Tank(Shooter):
             self.Fired = True
             if not other.Dead and self.hit(other):
                 #print(f"hit {side} -> {other_side}")
-                hit = f"tank hit"
-                print("tank hit")
                 other.Hit = True
                 other.Dead = True
                 reward += env.KillReward
                 other_reward -= env.WinReward
+                event = "tank hit"
             elif not target.Dead and env.HitTarget and self.hit(target):
                 #print(f"hit {side} -> target")
-                hit = f"target hit"
-                print("target hit")
                 reward += env.KillReward
                 target.Hit = True
                 target.Dead = True
+                event = "target hit"
             else:
                 reward += env.MissReward
         elif action == self.LEFT:
@@ -137,16 +135,17 @@ class Tank(Shooter):
         elif action == self.RIGHT:
             self.Angle = bind_angle(self.Angle - self.RotSpeed)
 
-        return fell, reward, other_reward
+        return event, reward, other_reward
 
 
 class TankDuelEnv(ActiveEnvironment):
     
     BaseReward = 0.0
     MissReward = -0.1
-    WinReward = 20.0
+    WinReward = 50.0
     FallReward = -WinReward
     DrawReward = -WinReward
+    KillReward = 30.0
     
     NActions = Tank.NActions
 
@@ -193,7 +192,7 @@ class TankDuelEnv(ActiveEnvironment):
         dy = self.Target.Y - tank.Y
         obs[7] = math.sqrt(dx*dx + dy*dy)
         obs[8] = math.atan2(dy, dx) #- tank.Angle
-        obs[9] = target.Dead and 1.0 or 0.0
+        obs[9] = self.Target.Dead and 1.0 or 0.0
         
         obs[10] = self.T/self.TimeHorizon
         
@@ -203,6 +202,7 @@ class TankDuelEnv(ActiveEnvironment):
         pass
         
     def reset(self, agents, training=True):
+        #print("\n--- new episode ---")
         self.Tanks = [Tank(agent) for agent in agents]
         [t.random_init(X0, X1, Y0, Y1, Margin) for t in self.Tanks]
         self.Target.random_init(X0, X1, Y0, Y1, Margin)
@@ -222,35 +222,44 @@ class TankDuelEnv(ActiveEnvironment):
                 observations[side] = obs
             tank.Fired = tank.Hit = False    # for rendering
 
+        event = None
         for side, tank in enumerate(self.Tanks):
             if not tank.Dead:
                 other = self.Tanks[1-side]
-                fell, reward, other_reward = tank.move(self, actions[side], other, self.Target)
+                e, reward, other_reward = tank.move(self, actions[side], other, self.Target)
+                event = event or e
                 tank.Agent.update(reward=reward)
                 other.Agent.update(reward=other_reward)
+
+        if event == "tank hit":
+            print("== event:", event)
+            print("Tank step    rewards:", *[t.Agent.StepReward for t in self.Tanks])
+            print("Tank episode rewards:", *[t.Agent.EpisodeReward for t in self.Tanks])
 
         done = all(t.Dead for t in self.Tanks)
         
         if not done:
             done = self.Target.Dead and sum(0 if t.Dead else 1 for t in self.Tanks) == 1
             if done:
+                print(">> winner >>")
                 for t in self.Tanks:
                     if not t.Dead:
                         t.Agent.update(reward=self.WinReward)
 
-        if not done:
-            self.T -= 1
-            if self.T <= 0:
-                done = True
-                for tank in self.Tanks:
-                    if not tank.Dead:
-                        tank.Agent.update(reward=self.DrawReward)
+        self.T -= 1
+        timeout = False
+        if not done and self.T <= 0:
+            done = timeout = True
+            print("== draw ==")
+            for tank in self.Tanks:
+                if not tank.Dead:
+                    tank.Agent.update(reward=self.DrawReward)
 
         if done:
             for side, tank in enumerate(self.Tanks):
                 obs = self.observation(side)
                 tank.Agent.done(obs)
-
+            #print("End episode: episode rewards:", *[t.Agent.EpisodeReward for t in self.Tanks])
         return done
             
     def render(self):

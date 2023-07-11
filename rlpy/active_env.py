@@ -50,18 +50,19 @@ class ActiveEnvironment(object):
 
         self.reset(agents, training)
         callbacks("active_env_begin_episode", self, agents)
-        all_done = False
+        end_episode = False
         T = self.MaxTurns
-        while not all_done and (T is None or T > 0):
-            all_done = self.turn()
+        while not end_episode and (T is None or T > 0):
+            end_episode = self.turn()
+            for a in agents:
+                a.end_turn()
             #print("ActiveEnv.run(): all_done=", all_done)
             if render:  self.render()
             callbacks("active_env_end_turn", self, agents)
-            if T is not None:
-                T -= 1
-                if not all_done and T <= 0:
-                    for a in agents:
-                        a.done(None)
+
+        # make sure done() is sent
+        for a in agents:
+            a.done(None)
 
         callbacks("active_env_end_episode", self, agents, training)
                 
