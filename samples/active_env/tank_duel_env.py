@@ -206,7 +206,6 @@ class TankDuelEnv(ActiveEnvironment):
         self.Tanks = [Tank(agent) for agent in agents]
         [t.random_init(X0, X1, Y0, Y1, Margin) for t in self.Tanks]
         self.Target.random_init(X0, X1, Y0, Y1, Margin)
-        [a.reset(training) for a in agents]
         self.T = self.TimeHorizon
         
     def turn(self):
@@ -236,7 +235,12 @@ class TankDuelEnv(ActiveEnvironment):
             print("Tank step    rewards:", *[t.Agent.StepReward for t in self.Tanks])
             print("Tank episode rewards:", *[t.Agent.EpisodeReward for t in self.Tanks])
 
-        done = all(t.Dead for t in self.Tanks)
+        done = True
+        for side, tank in enumerate(self.Tanks):
+            if tank.Dead:
+                tank.Agent.done(self.observation(side))             # this can be repeatet
+            else:
+                done = False
         
         if not done:
             done = self.Target.Dead and sum(0 if t.Dead else 1 for t in self.Tanks) == 1
@@ -255,11 +259,6 @@ class TankDuelEnv(ActiveEnvironment):
                 if not tank.Dead:
                     tank.Agent.update(reward=self.DrawReward)
 
-        if done:
-            for side, tank in enumerate(self.Tanks):
-                obs = self.observation(side)
-                tank.Agent.done(obs)
-            #print("End episode: episode rewards:", *[t.Agent.EpisodeReward for t in self.Tanks])
         return done
             
     def render(self):

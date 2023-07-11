@@ -48,6 +48,7 @@ class ActiveEnvironment(object):
         
         if max_turns is None:   max_turns = self.MaxTurns
 
+        for a in agents:    a.reset(training)
         self.reset(agents, training)
         callbacks("active_env_begin_episode", self, agents)
         end_episode = False

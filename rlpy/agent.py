@@ -129,6 +129,23 @@ class Agent(object):
         
             
 class MultiAgent(object):
+    
+    #
+    # Agent lifetime:
+    #
+    # For each episode:
+    #   reset()
+    #   for each turn:
+    #       action()
+    #       one or more update()
+    #       end_turn(done=False)
+    #   for last turn:
+    #       action()
+    #       one or more update()
+    #       end_turn(done=True)
+    #   episode_history()
+    #
+    
 
     Index = 0
 
@@ -144,7 +161,7 @@ class MultiAgent(object):
             id = MultiAgent.Index
             MultiAgent.Index += 1
         self.ID = id
-        self.LastStepReward = 0.0
+        self.Record = []
 
     def reset(self, training=True):
         #print("---------------------------------------------------")
@@ -152,67 +169,64 @@ class MultiAgent(object):
         self.Training = training
         self.EpisodeReward = 0.0
         self.StepReward = 0.0
-        self.Observations = []
-        self.Rewards = []               # Action rewards
-        self.Actions = []
-        self.Values = []                # values and probs used to calculate action
-        self.Probs = []                 # values and probs used to calculate action
         self.ValidActions = []
         self.Metadata = []
         self.Done = False
-        self.LastAction = None
-        self.LastStepReward = 0.0
-        #print("Agent[%d].reset()" % (id(self)%100,))
-        self.LastMetadata = None
-        self.History = []           # [(observation, action, reward)]
+        self.Record = []            # [(observation, action, reward, metadata)]       can be more than 1 per turn, some fields can be None
+        self.ActionData = None
+        
+        #
+        # history buffers used for training
+        #
+        self.Observations = []
+        self.Actions = []
+        self.Values = []
+        self.Probs = []
+        self.ValidActions = []
+        self.Rewards = []
         
     def action(self, observation, valid_actions=None, metadata=None):
+        if self.Done:
+            raise RuntimeError("Calling action() on an agent, which is Done")
         # this is reward for the previuous action
         #print("agent.action()")
-        
-        self.Observations.append(observation)
-        if valid_actions is not None:
-            self.ValidActions.append(valid_actions)
-        if self.LastAction is not None:
-            self.Rewards.append(self.StepReward)
+        self.StepReward = 0.0        
         value, probs, action = self.Brain.action(observation, valid_actions, self.Training)
-        self.Actions.append(action)
-        self.Values.append(value)
-        self.Probs.append(probs)
-        #print("Agent[%d].action() -> %d" % (id(self)%100, action))
-        self.LastAction = action
-        self.History.append((observation, action, None))
+        self.Record.append((observation, action, None, metadata))
+        self.ActionData = (observation, action, value, probs, valid_actions)
         return action
 
     def update(self, observation=None, reward=None, metadata=None):
-        #print("agent.update()", f"reward {reward}" if reward is not None else "")
-        if reward:
-            self.StepReward += reward
         if observation is not None:
-            self.Observation = observation
-            self.History.append((observation, None, reward))
+            self.Record.append((observation, None, None, metadata))
+        if not self.Done and reward and self.StepReward is not None:
+            self.StepReward += reward
         
         #print("Agent[%d].reward(%.4f) accumulated=%.4f" % (id(self)%100, reward, self.Reward))
 
-    def end_turn(self):
-        self.EpisodeReward += self.StepReward
-        self.LastStepReward = self.StepReward
-        self.StepReward = 0.0
+    def end_turn(self, done=False, observation=None):
 
-    def done(self, last_observation, metadata=None):
-        #print("agent.done()", f"reward {reward}" if reward is not None else "")
-        #print("---------------------------------------------------")
-        #print("Agent[%d].done()" % (id(self)%100, ))
-        #print("Agent[%d].done(reward=%f)" % (id(self)%100, reward))
-        #print("Agent", id(self)%10, "done:", reward)
-        
+        if observation is not None:
+            self.Record.append((observation, None, None, None))
+
         if not self.Done:
-            self.Done = True
-            if self.LastAction is not None:
-                self.Rewards.append(self.LastStepReward)
-            self.EpisodeRewardMA += self.Alpha*(self.EpisodeReward - self.EpisodeRewardMA)
-            self.History.append((last_observation, None, 0.0))      # purely for rendering
-        #self.Observations.append(observation)
+            if self.StepReward is not None:
+                self.EpisodeReward += self.StepReward
+            self.ActionData is not None:
+                # data used for training
+                observation, action, value, probs, valid_actions = self.ActionData
+                self.Observations.append(observation)
+                self.Actions.append(action)
+                self.Values.append(value)
+                self.Probs.append(probs)
+                self.ValidActions.append(valid_actions)
+                self.Rewards.append(self.StepReward)
+                self.ActionData = None
+            self.StepReward = None      # action() will reset it to 0.0
+            if done:
+                # do this only once
+                self.Done = True
+                self.EpisodeRewardMA += self.Alpha*(self.EpisodeReward - self.EpisodeRewardMA)
         
     def episode_history(self):
         valids = np.array(self.ValidActions) if self.ValidActions else None
@@ -224,7 +238,7 @@ class MultiAgent(object):
             "observations":     self.Observations,              # list of ndarrays
             "probs":            np.array(self.Probs),
             "values":           np.array(self.Values),
-            "observation_history":     self.History
+            "record":           self.Record
         }
         #print("Agent[%d].history():" % (id(self)%100,), *((k, len(lst) if lst is not None else "none") for k, lst in out.items()))
         #print("          valids:", out["valids"])
