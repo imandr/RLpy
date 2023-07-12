@@ -87,6 +87,22 @@ def entropy_actions_loss(_, probs, data):
         k = abs(logn-1.0)/n
         return values/logn, grads*k
 
+def entropy_actions_loss(_, probs, data):
+        valid_mask=data.get("valid_actions")
+        p = np.clip(probs, 1e-5, None)
+        p = p/np.sum(p, axis=-1, keepdims=True)
+        values = -np.sum(p*np.log(p), axis=-1)
+        grads = np.log(p)+1.0
+        n = probs.shape[-1]
+        gavg = np.mean(grads, axis=-1, keepdims=True)
+        grads = grads - gavg
+        if valid_mask is not None:
+            grads = grads * valid_mask
+        logn = math.log(n)
+        k = abs(logn-1.0)/n
+        #print("entropy_actions_loss: probs:", probs, "   grads:", grads)
+        return values, grads
+
 def actor_actions_loss(_, probs, values, data):
         probs_shape = probs.shape
         mb = probs_shape[0]
