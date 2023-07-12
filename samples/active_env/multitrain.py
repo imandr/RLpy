@@ -62,7 +62,7 @@ if env_name == "duel":
     nagents = 2
     alpha = 0.2
     hidden = 500
-    entropy_weight = 0.05
+    entropy_weight = 0.1
     gamma = 0.99
     beta = 0.0
 elif env_name == "duel_projectile":
