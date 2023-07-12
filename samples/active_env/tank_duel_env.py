@@ -85,18 +85,16 @@ class Tank(Shooter):
     def move(self, env, action, other, target):
         
         if self.Dead:
-            return False, 0.0, 0.0
+            return
         
         #print("turn: side:", side, "   accumulated tank rewards:", [t.Reward for t in self.Tanks])
         agent = self.Agent
         other_agent = other.Agent
         #print("side:", side, " tank.Reward since last action:", tank.Reward)
 
-        reward = env.BaseReward
-        other_reward = 0.0
+        agent.update(reward=env.BaseReward)
         
         self.Fired = False        # for viewing
-        done = False
         hit = ""
 
         if action in (self.FWD, self.FFWD, self.BCK):
@@ -108,8 +106,8 @@ class Tank(Shooter):
             x1 = max(X0, min(X1, x))
             y1 = max(Y0, min(Y1, y))
             if x1 != x or y1 != y:  # bump ?
-                reward += env.FallReward
-                done = True
+                agent.update(reward=env.FallReward)
+                self.Dead = True
             self.X, self.Y = x1, y1
             #self.Reward += 0.001
         elif action == self.FIRE:
@@ -120,31 +118,23 @@ class Tank(Shooter):
                 print("tank hit")
                 other.Hit = True
                 other.Dead = True
-                if env.Duel:
-                    done = True
-                reward += env.WinReward
-                other_reward -= env.WinReward
+                agent.update(reward=env.WinReward)
+                other_agent.update(reward=-env.WinReward)
             elif not target.Dead and env.HitTarget and self.hit(target):
                 #print(f"hit {side} -> target")
                 hit = f"target hit"
                 print("target hit")
-                reward += env.WinReward
+                agent.update(reward=env.WinReward)
                 target.Hit = True
                 target.Dead = True
                 if env.Compete:
-                    other_reward -= env.WinReward
-                done = True
+                    other_agent.update(reward=-env.WinReward)
             else:
-                reward += env.MissReward
+                agent.update(reward=env.MissReward)
         elif action == self.LEFT:
             self.Angle = bind_angle(self.Angle + self.RotSpeed)
         elif action == self.RIGHT:
             self.Angle = bind_angle(self.Angle - self.RotSpeed)
-
-        if done:
-            print("tank done: rewards:", reward, other_reward, "hit:", hit)
-
-        return done, reward, other_reward
 
 
 class TankDuelEnv(ActiveEnvironment):
