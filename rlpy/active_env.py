@@ -9,21 +9,31 @@ class ActiveEnvAgent(object):
         pass
         
     def reset(self, training):
-        # reset the agent state and get ready for the episode in training or test mode
+        # reset the agent state for new episode
         pass
+        
+    def action(self, observation, valid_actions=None):
+        # ends previous turn and begins new one. Rewards accumulated since the previous action() will be associated
+        # with the previous action
+        # the environment asks the agent for the next action for the observation
+        # called once per turn
+        # returns the action to take for the turn
+        raise NotImplementedError()
         
     def update(self, observation=None, reward=0.0):
         # the environment may notify the agent about its changes by calling this method zero or more times between agent's actions
         # the arguments, both optional, can be used to pass new observation and/or an incremental reward received by the agent
+        # intermediate observations received between action and end_turn() can be used by RRN-based agents
+        # rewards will be accumulated and associated with the action at end_turn()
         pass
 
-    def action(self, observation, valid_actions=None):
-        # the environment asks the agent for the next action for the observation
-        raise NotImplementedError()
+    def end_turn(self):
+        # Rewards accumulated since the previous action() will be associated with the previous action
+        # Reward accumulation will be reset
+        pass
         
-    def done(self, reward=0.0, observation=None):
-        # the environment signals the end of the episode. Depending on the environment, it may also provide the last observation,
-        # corresponding to the end state for the agent. Optional reward is the last reward received by the agent in the episode.
+    def end_episode(self):
+        # the environment signals the end of the episode
         pass
         
 
@@ -49,6 +59,8 @@ class ActiveEnvironment(object):
         if max_turns is None:   max_turns = self.MaxTurns
 
         self.reset(agents, training)
+        for a in agents:
+            a.reset(training)
         callbacks("active_env_begin_episode", self, agents)
         end_episode = False
         T = self.MaxTurns
@@ -62,7 +74,7 @@ class ActiveEnvironment(object):
 
         # make sure done() is sent
         for a in agents:
-            a.done(None)
+            a.end_episode()
 
         callbacks("active_env_end_episode", self, agents, training)
                 
@@ -70,7 +82,7 @@ class ActiveEnvironment(object):
         pass
         
     def turn(self):       # overridable
-        return False    # true if all agents are done
+        return False      # true if this is the end of the episode
                 
 class ActiveFromGymEnvironment(ActiveEnvironment):
     

@@ -213,13 +213,11 @@ class TankDuelEnv(ActiveEnvironment):
         done = False
         
         actions = {}
-        observations = {}
 
         for side, tank in enumerate(self.Tanks):
             if not tank.Dead:
                 obs = self.observation(side)
                 actions[side] = tank.Agent.action(obs)
-                observations[side] = obs
             tank.Fired = tank.Hit = False    # for rendering
 
         event = None
@@ -231,10 +229,9 @@ class TankDuelEnv(ActiveEnvironment):
                 tank.Agent.update(reward=reward)
                 other.Agent.update(reward=other_reward)
 
-        if event == "tank hit":
+        if event:
             print("== event:", event)
             print("Tank step    rewards:", *[t.Agent.StepReward for t in self.Tanks])
-            print("Tank episode rewards:", *[t.Agent.EpisodeReward for t in self.Tanks])
 
         done = all(t.Dead for t in self.Tanks)
         
@@ -250,16 +247,14 @@ class TankDuelEnv(ActiveEnvironment):
         timeout = False
         if not done and self.T <= 0:
             done = timeout = True
-            print("== draw ==")
+            #print("== draw ==")
             for tank in self.Tanks:
                 if not tank.Dead:
                     tank.Agent.update(reward=self.DrawReward)
+                    
+        for tank in self.Tanks:
+            tank.Agent.end_turn()
 
-        if done:
-            for side, tank in enumerate(self.Tanks):
-                obs = self.observation(side)
-                tank.Agent.done(obs)
-            #print("End episode: episode rewards:", *[t.Agent.EpisodeReward for t in self.Tanks])
         return done
             
     def render(self):
@@ -295,6 +290,7 @@ class TankDuelEnv(ActiveEnvironment):
 
             self.TargetSprite = Circle(self.Target.Radius, filled=False, width=2, transient=True).color(1.0, 0.5, 0.3)
             self.HitTargetSprite = Circle(self.Target.Radius, filled=True, transient=True).color(1.0, 0.5, 0.3)
+            self.DeadTargetSprite = Circle(self.Target.Radius, filled=False, width=2, transient=True).color(0.5, 0.3, 0.3)
 
         hit = False
         for i, (t, s, b, d) in enumerate(zip(self.Tanks, self.TankSprites, self.TankBeams, self.TankBodies)):
@@ -307,14 +303,18 @@ class TankDuelEnv(ActiveEnvironment):
                 b.hide()
             if t.Hit:   
                 d.color(1.0,0.5,0.1)
+            elif t.Dead:   
+                d.color(0.5,0.3,0.3)
             else:
                 d.color(*self.TankColors[i])
             hit = hit or t.Hit
             status = self.StatusLabels[agent.ID]
             status.Text = "%.3f" % (agent.EpisodeReward,)
             status.move_to(t.X, t.Y - 0.03)
-        if self.Target.Dead:
+        if self.Target.Hit:
             self.Frame.add(self.HitTargetSprite, at=(self.Target.X, self.Target.Y))
+        if self.Target.Dead:
+            self.Frame.add(self.DeadTargetSprite, at=(self.Target.X, self.Target.Y))
         else:
             self.Frame.add(self.TargetSprite, at=(self.Target.X, self.Target.Y))
             

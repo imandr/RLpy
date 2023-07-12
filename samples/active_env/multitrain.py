@@ -4,7 +4,7 @@ from util import Monitor, Smoothie
 import time, os.path
 import gradnet
 from gradnet import ModelClient
-
+np.set_printoptions(linewidth=150)
 opts, args = getopt.getopt(sys.argv[1:], "w:s:l:b:n:a:m:rt:")
 opts = dict(opts)
 load_from = opts.get("-l")
@@ -63,6 +63,8 @@ if env_name == "duel":
     hidden = 500
     entropy_weight = 0.005
     gamma = 0.995
+    #cutoff = None
+    beta = 0.0
 elif env_name == "duel_projectile":
     from tank_duel_projectile import TankDuelProjectileEnv
     duel = True

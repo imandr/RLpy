@@ -362,6 +362,14 @@ class Brain(object):
         
         actions = h["actions"]
         valids = h["valid_actions"]
+        
+        hit_detected = any(r > 0.0 for r in rewards)
+        
+        if False and any(r > 0.0 for r in rewards):
+            print("--- episode history: ---")
+            for o, a, r in zip(observations, actions, rewards):
+                print(o, a, r)
+        
         T = len(actions)
 
         #print("Brain.add_losses_from_episode: observations:", type(observations), observations)
@@ -377,6 +385,9 @@ class Brain(object):
         probs, values = self.evaluate_states(observations)
         valid_probs = self.valid_probs(probs, valids)
         returns = self.calculate_future_returns(rewards, valid_probs, values)
+        if hit_detected:
+            print("rewards:", rewards)
+            print("returns:", returns)
         h["returns"] = returns
 
         h = self.format_episode_history(h)
