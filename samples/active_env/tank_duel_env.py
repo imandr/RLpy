@@ -142,7 +142,7 @@ class Tank(Shooter):
             self.Angle = bind_angle(self.Angle - self.RotSpeed)
 
         if done:
-            print("done: rewards:", reward, other_reward, "hit:", hit)
+            print("tank done: rewards:", reward, other_reward, "hit:", hit)
 
         return done, reward, other_reward
 
@@ -301,6 +301,7 @@ class TankDuelEnv(ActiveEnvironment):
             status.Text = "%.3f" % (agent.EpisodeReward,)
             status.move_to(t.X, t.Y - 0.03)
         if self.Target.Dead:
+            hit = True
             self.Frame.add(self.HitTargetSprite, at=(self.Target.X, self.Target.Y))
         else:
             self.Frame.add(self.TargetSprite, at=(self.Target.X, self.Target.Y))

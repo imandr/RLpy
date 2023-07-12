@@ -38,7 +38,7 @@ if model_server_url:
 np.set_printoptions(precision=4, suppress=True)
 
 cutoff = None
-beta = 0.5
+beta = 0.0
 gamma = 0.99
 comment = ""
 learning_rate = 0.01
@@ -48,12 +48,13 @@ hidden = 400
 
 entropy_weight = 0.002
 critic_weight = 1.0
+actor_weight = 0.9
 invalid_action_weight = 10.0
 cross_training = 0.0
 
 if env_name == "duel":
     from tank_duel_env import TankDuelEnv
-    duel = False
+    duel = True
     hit_target = True
     compete = True
     brain_mode = "chain"
@@ -61,8 +62,9 @@ if env_name == "duel":
     nagents = 2
     alpha = 0.2
     hidden = 500
-    entropy_weight = 0.005
-    gamma = 0.995
+    entropy_weight = 0.05
+    gamma = 0.99
+    beta = 0.0
 elif env_name == "duel_projectile":
     from tank_duel_projectile import TankDuelProjectileEnv
     duel = True
