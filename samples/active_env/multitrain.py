@@ -48,7 +48,7 @@ hidden = 400
 
 entropy_weight = 0.002
 critic_weight = 1.0
-actor_weight = 0.9
+actor_weight = 1.0
 invalid_action_weight = 10.0
 cross_training = 0.0
 
@@ -62,8 +62,8 @@ if env_name == "duel":
     nagents = 2
     alpha = 0.2
     hidden = 500
-    entropy_weight = 0.1
-    gamma = 0.99
+    entropy_weight = 0.05
+    gamma = 0.995
     beta = 0.0
 elif env_name == "duel_projectile":
     from tank_duel_projectile import TankDuelProjectileEnv

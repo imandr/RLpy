@@ -1,6 +1,7 @@
 import random, math
 import numpy as np
 from rlpy.util import CallbackList
+from .active_env import ActiveEnvAgent
 
 class Agent(object):
 
@@ -128,7 +129,9 @@ class Agent(object):
         return self.Brain.train_on_multi_episode_history(multi_ep_history)
         
             
-class MultiAgent(object):
+class MultiAgent(ActiveEnvAgent):
+    
+    # non-RNN based multiagent
 
     Index = 0
 
@@ -138,91 +141,69 @@ class MultiAgent(object):
         self.EpisodeRewardMA = 0.0                # episode reward moving average, calculated using Alpha
         self.EpisodeReward = 0.0                # reward accumulated since for the episode
         self.StepReward = None                  # reward accumulated since last action, None before first action, then a float
+        self.StepRecord = None                  # (observaiton, action, step reward)
         self.Training = None
-        self.History = []           # [(observation, action, reward)]
+        self.TrainingHistory = []           # [(observation, valid_actions, action, step reward)]
         if id is None:
             id = MultiAgent.Index
             MultiAgent.Index += 1
         self.ID = id
+        self.LastStepReward = 0.0
 
     def reset(self, training=True):
         #print("---------------------------------------------------")
         #print("agent.reset()")
         self.Training = training
         self.EpisodeReward = 0.0
-        self.StepReward = 0.0
-        self.Observations = []
-        self.Rewards = []               # Action rewards
-        self.Actions = []
+        self.StepReward = None          # will be reset to 0 by action()
         self.Values = []                # values and probs used to calculate action
         self.Probs = []                 # values and probs used to calculate action
-        self.ValidActions = []
         self.Metadata = []
         self.Done = False
         self.LastAction = None
+        self.LastStepReward = 0.0
         #print("Agent[%d].reset()" % (id(self)%100,))
         self.LastMetadata = None
-        self.History = []           # [(observation, action, reward)]
+        self.TrainingHistory = []           # [(observation, valid_actions, action, step reward)]
+        self.ActionData = None                  # (observaiton, action, valid_actions) - data used to calculate the action
         
     def action(self, observation, valid_actions=None, metadata=None):
         # this is reward for the previuous action
         #print("agent.action()")
-        
-        self.Observations.append(observation)
-        if valid_actions is not None:
-            self.ValidActions.append(valid_actions)
-        if self.LastAction is not None:
-            self.Rewards.append(self.StepReward)
-        self.EpisodeReward += self.StepReward
         self.StepReward = 0.0
         value, probs, action = self.Brain.action(observation, valid_actions, self.Training)
-        self.Actions.append(action)
+        self.ActionData = (observation, valid_actions, action)       # init, will be complete by end_turn()
         self.Values.append(value)
         self.Probs.append(probs)
-        #print("Agent[%d].action() -> %d" % (id(self)%100, action))
-        self.LastAction = action
-        self.History.append((observation, action, None))
         return action
 
     def update(self, observation=None, reward=None, metadata=None):
+        # ignore intermediate observations, can be used by RNN-based agents
         #print("agent.update()", f"reward {reward}" if reward is not None else "")
-        if reward:
+        if self.StepReward is not None and reward:
             self.StepReward += reward
-        if observation is not None:
-            self.Observation = observation
-            self.History.append((observation, None, reward))
-        
-        #print("Agent[%d].reward(%.4f) accumulated=%.4f" % (id(self)%100, reward, self.Reward))
-        
-    def done(self, last_observation, reward=0.0, metadata=None):
-        #print("agent.done()", f"reward {reward}" if reward is not None else "")
-        #print("---------------------------------------------------")
-        #print("Agent[%d].done()" % (id(self)%100, ))
-        #print("Agent[%d].done(reward=%f)" % (id(self)%100, reward))
-        #print("Agent", id(self)%10, "done:", reward)
-        
-        if not self.Done:
-            self.Done = True
-            self.StepReward += reward
+
+    def end_turn(self):
+        if self.StepReward is not None:
             self.EpisodeReward += self.StepReward
-            if self.LastAction is not None:
-                self.Rewards.append(self.StepReward)
-            self.StepReward = 0.0
-            self.EpisodeRewardMA += self.Alpha*(self.EpisodeReward - self.EpisodeRewardMA)
-            self.History.append((last_observation, None, reward))
-        #self.Observations.append(observation)
+            self.TrainingHistory.append(self.ActionData + (self.StepReward,))
+            self.StepReward = None
+
+    def end_episode(self):
+        self.EpisodeRewardMA += self.Alpha*(self.EpisodeReward - self.EpisodeRewardMA)
         
     def episode_history(self):
-        valids = np.array(self.ValidActions) if self.ValidActions else None
+        observations, valids, actions, rewards = zip(*self.TrainingHistory)
+        if all(v is None for v in valids):
+            valids = None
         out = {
-            "nsteps":           len(self.Actions),
-            "rewards":          np.array(self.Rewards),
-            "actions":          np.array(self.Actions),
+            "nsteps":           len(actions),
+            "rewards":          np.array(rewards),
+            "actions":          np.array(actions),
             "valid_actions":    valids,
-            "observations":     self.Observations,              # list of ndarrays
+            "observations":     observations,              # list of ndarrays
             "probs":            np.array(self.Probs),
-            "values":           np.array(self.Values),
-            "observation_history":     self.History
+            "values":           np.array(self.Values)
         }
         #print("Agent[%d].history():" % (id(self)%100,), *((k, len(lst) if lst is not None else "none") for k, lst in out.items()))
         #print("          valids:", out["valids"])

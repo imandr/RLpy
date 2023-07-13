@@ -124,11 +124,10 @@ class Tank(Shooter):
                 #print(f"hit {side} -> target")
                 hit = f"target hit"
                 print("target hit")
-                agent.update(reward=env.WinReward)
                 target.Hit = True
                 target.Dead = True
-                if env.Compete:
-                    other_agent.update(reward=-env.WinReward)
+                agent.update(reward=env.WinReward)
+                other_agent.update(reward=-env.WinReward)
             else:
                 agent.update(reward=env.MissReward)
         elif action == self.LEFT:
@@ -206,7 +205,7 @@ class TankDuelEnv(ActiveEnvironment):
         self.T = self.TimeHorizon
         
     def turn(self):
-        done = False
+        end_episode = False
         
         actions = {}
         observations = {}
@@ -221,23 +220,18 @@ class TankDuelEnv(ActiveEnvironment):
         for side, tank in enumerate(self.Tanks):
             if not tank.Dead:
                 other = self.Tanks[1-side]
-                tank_done, reward, other_reward = tank.move(self, actions[side], other, self.Target)
-                done = done or tank_done
-                tank.Agent.update(reward=reward)
-                other.Agent.update(reward=other_reward)
+                tank.move(self, actions[side], other, self.Target)
+        
+        end_episode = self.Target.Dead or any(t.Dead for t in self.Tanks)
 
         self.T -= 1
-        if not done:
+        if not end_episode:
             if self.T <= 0:
-                done = True
+                end_episode = True
                 for tank in self.Tanks:
                     tank.Agent.update(reward=self.DrawReward)
-        if done:
-            for side, tank in enumerate(self.Tanks):
-                obs = self.observation(side)
-                tank.Agent.done(obs)
 
-        return done
+        return end_episode
             
     def render(self):
         if self.Viewer is None:
