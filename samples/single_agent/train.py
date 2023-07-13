@@ -147,6 +147,15 @@ EnvParams = {
         "actor_weight":    1.0,
         #"cutoff":           1
     },
+    "secretary":  {
+        "brain":  BrainDiscrete,
+        "gamma":    0.999,
+        "target":   1.0,
+        "learning_rate":    0.01,
+        "critic_weight":    1.0,
+        "entropy_weight":   0.1,
+        "actor_weight":    1.0
+    },
     "cartpole_cont":  {
         "brain":  BrainContinuous,
         "gamma":    0.99,
@@ -250,13 +259,13 @@ EnvParams = {
         "gamma":    0.99,
         "epsilon":  0.0,
         "cutoff":   None,
-        "beta":     1.0,
+        "beta":     0.0,
         "learning_rate":    0.01,
         "entropy_weight":   0.001,
         "critic_weight":    0.5,
         "actor_weight":    1.0,
         "invalid_action_weight":    5.0,
-        "max_steps_per_episode":    100,
+        "max_steps_per_episode":    None,
         "max_episodes":     100000,
         "steps_per_batch":  20,
         "episodes_between_tests":   1000,
@@ -322,6 +331,9 @@ if env_name == "tanks":
     env = TankTargetEnv()
 elif env_name == "walker":
     env = WalkerEnv()
+elif env_name == "secretary":
+    from secretary import SecretaryHiringEnv
+    env = SecretaryHiringEnv()
 elif env_name == "air_defense":
     from air_defense import AirDefenseEnv
     env = AirDefenseEnv()
